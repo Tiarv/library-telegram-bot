@@ -36,8 +36,40 @@ INPX_SCHEMA_CACHE: dict[str, dict[str, int]] = {}
 MAX_MATCH_COLLECT = 9999
 MAX_MATCH_DISPLAY = 9999
 TELEGRAM_MAX_MESSAGE_LEN = 3900
+MAX_CAPTION_LEN = 3001
 
 SEPARATORS = ("\x04", "\t", ";", "|")
+
+def build_safe_caption(prefix: str, match: dict) -> str:
+    """
+    Build a Telegram-safe caption from match fields:
+      - prefix (e.g. 'found' or 'found (converted to EPUB)')
+      - author, title, id, ext
+
+    It trims very long fields so the final caption stays under MAX_CAPTION_LEN.
+    """
+    author = (match.get("author") or "").strip()
+    title = (match.get("title") or "").strip()
+    lib_id = (match.get("lib_id") or "").strip()
+    ext = (match.get("ext") or "").strip()
+
+    def shorten(s: str, max_len: int) -> str:
+        if len(s) <= max_len:
+            return s
+        return s[: max_len - 1] + "…"
+
+    # Reasonable per-field limits
+    author = shorten(author, 1500)
+    title = shorten(title, 1500)
+
+    caption = f"{prefix}\n(author: {author}, title: {title}, id: {lib_id}, ext: {ext})"
+
+    # Extra safety: if somehow still too long, drop title completely
+    if len(caption) > MAX_CAPTION_LEN:
+        caption = f"{prefix}\n(id: {lib_id}, ext: {ext})"
+
+    return caption
+
 
 def split_text_for_telegram(text: str, limit: int = TELEGRAM_MAX_MESSAGE_LEN) -> list[str]:
     """
@@ -754,14 +786,9 @@ async def check_inpx(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
             await message.reply_document(
                 document=f,
                 filename=send_name or os.path.basename(tmp_book_path),
-                caption=(
-                    "found\n"
-                    f"(author: {match.get('author')}, "
-                    f"title: {match.get('title')}, "
-                    f"id: {match.get('lib_id')}, "
-                    f"ext: {match.get('ext')})"
-                ),
+                caption=build_safe_caption("found", match),
             )
+
     except Exception as e:
         logger.error("Failed to send book file %s: %s", tmp_book_path, e)
         await message.reply_text(
@@ -827,11 +854,9 @@ async def pick(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             await message.reply_document(
                 document=f,
                 filename=send_name or os.path.basename(tmp_book_path),
-                caption=(
-                    "found (by /pick)\n"
-                    f"(author: {match['author']}, title: {match['title']}, id: {match['lib_id']})"
-                ),
+                caption=build_safe_caption("found (by /pick)", match),
             )
+
     except Exception as e:
         logger.error("Failed to send picked book file %s: %s", tmp_book_path, e)
         await message.reply_text(
@@ -896,14 +921,9 @@ async def pick_epub(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             await message.reply_document(
                 document=f,
                 filename=send_name or os.path.basename(tmp_epub_path),
-                caption=(
-                    "found (converted to EPUB)\n"
-                    f"(author: {match.get('author')}, "
-                    f"title: {match.get('title')}, "
-                    f"id: {match.get('lib_id')}, "
-                    f"orig ext: {match.get('ext')})"
-                ),
+                caption=build_safe_caption("found (converted to EPUB)", match),
             )
+
     except Exception as e:
         logger.error("Failed to send EPUB file %s: %s", tmp_epub_path, e)
         await message.reply_text(
