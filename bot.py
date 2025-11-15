@@ -50,7 +50,6 @@ def build_safe_caption(prefix: str, match: dict) -> str:
     """
     author = (match.get("author") or "").strip()
     title = (match.get("title") or "").strip()
-    lib_id = (match.get("lib_id") or "").strip()
     ext = (match.get("ext") or "").strip()
 
     def shorten(s: str, max_len: int) -> str:
@@ -62,11 +61,11 @@ def build_safe_caption(prefix: str, match: dict) -> str:
     author = shorten(author, 1500)
     title = shorten(title, 1500)
 
-    caption = f"{prefix}\n(author: {author}, title: {title}, id: {lib_id}, ext: {ext})"
+    caption = f"{prefix}\n(author: {author}, title: {title}, ext: {ext})"
 
     # Extra safety: if somehow still too long, drop title completely
     if len(caption) > MAX_CAPTION_LEN:
-        caption = f"{prefix}\n(id: {lib_id}, ext: {ext})"
+        caption = f"{prefix}\n(ext: {ext})"
 
     return caption
 
@@ -197,7 +196,6 @@ def load_inpx_schema(inpx_path: str) -> dict[str, int]:
         1: author
         3: title
         6: filename (no ext)
-        8: lib_id
         10: ext
         13: container filename (relative)
 
@@ -206,7 +204,6 @@ def load_inpx_schema(inpx_path: str) -> dict[str, int]:
         "author_idx": int,
         "title_idx": int,
         "filename_idx": int,
-        "lib_id_idx": int,
         "ext_idx": int,
         "container_idx": int,
       }
@@ -221,7 +218,6 @@ def load_inpx_schema(inpx_path: str) -> dict[str, int]:
         "author_idx": 0,      # field 1
         "title_idx": 2,       # field 3
         "filename_idx": 5,    # field 6
-        "lib_id_idx": 7,      # field 8
         "ext_idx": 9,         # field 10
         "container_idx": 12,  # field 13
     }
@@ -293,7 +289,6 @@ def load_inpx_schema(inpx_path: str) -> dict[str, int]:
             author_idx = find_index(["author"])
             title_idx = find_index(["title"])
             filename_idx = find_index(["file", "filename"])
-            lib_id_idx = find_index(["libid", "lib_id", "bookid", "id"])
             ext_idx = find_index(["ext", "extension"])
             container_idx = find_index(["container", "arc", "zip", "archive", "folder"])
 
@@ -306,14 +301,11 @@ def load_inpx_schema(inpx_path: str) -> dict[str, int]:
                 author_idx = default_schema["author_idx"]
             if title_idx is None:
                 title_idx = default_schema["title_idx"]
-            if lib_id_idx is None:
-                lib_id_idx = default_schema["lib_id_idx"]
 
             schema = {
                 "author_idx": author_idx,
                 "title_idx": title_idx,
                 "filename_idx": filename_idx,
-                "lib_id_idx": lib_id_idx,
                 "ext_idx": ext_idx,
                 "container_idx": container_idx,
             }
@@ -355,7 +347,6 @@ def parse_inpx_record(line: str) -> dict | None:
     author = parts[0].strip()
     title = parts[2].strip()
     filename = parts[5].strip()
-    lib_id = parts[7].strip()
     ext = parts[9].strip()
     container_relpath = parts[12].strip()
 
@@ -376,7 +367,6 @@ def parse_inpx_record(line: str) -> dict | None:
     return {
         "author": author,
         "title": title,
-        "lib_id": lib_id,
         "container_relpath": container_relpath,
         "inner_book_name": inner_book_name,
         "ext": ext,
@@ -833,11 +823,10 @@ async def check_inpx(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         for idx, rec in enumerate(matches[:MAX_MATCH_DISPLAY], start=1):
             author = rec.get("author") or "<?>"
             title = rec.get("title") or "<?>"
-            lib_id = rec.get("lib_id") or "<?>"
             ext = rec.get("ext") or "<?>"
             inpx_name = os.path.basename(rec.get("inpx_path") or "") or "<?>"
             lines.append(
-                f"{idx}) {author} — {title} [id: {lib_id}, ext: {ext}] (in {inpx_name})"
+                f"{idx}) {author} — {title} [ext: {ext}] (in {inpx_name})"
             )
 
         shown = min(len(matches), MAX_MATCH_DISPLAY)
