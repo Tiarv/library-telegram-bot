@@ -665,14 +665,15 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
     await message.reply_text(
         "/start – say hi\n"
-        "/help – this help\n"
-        "/checkinpx <pattern> – search inside INPX (multiple words = AND filter).\n"
-        "/pick <n> – send n-th result from the last search (original format).\n"
-        "/pickfmt or /pf <n> <format> – send n-th result converted via ebook-convert "
-        "(e.g. /pf 1 epub, /pf 2 mobi).\n"
+        "/help or /h – this help\n"
+        "/checkinpx or /c <pattern> – search inside INPX (multiple words = AND filter).\n"
+        "/pickfmt or /pf <n> [format] – send n-th result from the last search.\n"
+        "  Examples:\n"
+        "    /pf 3        – send original file\n"
+        "    /pf 3 epub   – convert to EPUB\n"
+        "    /pf 3 pdf    – convert to PDF\n"
         "Send any text and I'll echo it back."
-    )
-
+)
 
 async def echo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     message = update.effective_message
@@ -802,30 +803,39 @@ async def check_inpx(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
 async def pickfmt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
-    /pickfmt <n> <format> or /pf <n> <format> –
-    send the n-th result from the last /checkinpx search,
-    converted to the requested format via ebook-convert.
+    /pickfmt <n> [format] or /pf <n> [format] –
+    send the n-th result from the last /checkinpx search.
+
+    - If format is omitted: send original file (like /pick).
+    - If format equals the original extension: send original file.
+    - Otherwise: convert via ebook-convert to the requested format.
     """
     message = update.effective_message
     if message is None:
         return
 
-    if len(context.args) < 2:
-        await message.reply_text("Usage: /pickfmt <number> <format>, e.g. /pickfmt 1 epub")
+    if not context.args:
+        await message.reply_text(
+            "Usage: /pickfmt <number> [format]\n"
+            "Examples:\n"
+            "  /pickfmt 1        – send original file\n"
+            "  /pickfmt 1 epub   – convert to EPUB\n"
+            "  /pickfmt 1 pdf    – convert to PDF"
+        )
         return
 
     # Parse index
     try:
         index = int(context.args[0])
     except ValueError:
-        await message.reply_text("First argument must be a number, e.g. /pickfmt 1 epub")
+        await message.reply_text(
+            "First argument must be a number, e.g. /pickfmt 1 epub"
+        )
         return
 
-    # Parse format
-    target_format = context.args[1].strip().lstrip(".").lower()
-    if not target_format:
-        await message.reply_text("Format must not be empty, e.g. /pickfmt 1 epub")
-        return
+    # Optional format
+    target_format_arg = context.args[1] if len(context.args) >= 2 else ""
+    target_format = target_format_arg.strip().lstrip(".").lower()
 
     key = _cache_key_from_update(update)
     if key is None or key not in MATCH_CACHE:
@@ -844,7 +854,60 @@ async def pickfmt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     match = matches[index - 1]
 
-    # Do extract + convert in a background thread (so we don't block the event loop)
+    # Determine original format from match["ext"]
+    orig_ext_raw = (match.get("ext") or "").strip()
+    orig_format = orig_ext_raw.lstrip(".").lower()
+
+    # Decide whether to convert or send as-is:
+    # - no target_format given -> send original
+    # - target_format == original -> send original
+    # - else -> convert
+    send_original = False
+    if not target_format:
+        send_original = True
+    elif orig_format and target_format == orig_format:
+        send_original = True
+
+    if send_original:
+        # Behave like /pick: extract and send original file
+        tmp_book_path, send_name = await asyncio.to_thread(
+            extract_book_for_match,
+            match,
+        )
+
+        if not tmp_book_path:
+            await message.reply_text(
+                "This record was found, but the book could not be extracted."
+            )
+            return
+
+        try:
+            with open(tmp_book_path, "rb") as f:
+                await message.reply_document(
+                    document=f,
+                    filename=send_name or os.path.basename(tmp_book_path),
+                    caption=build_safe_caption(
+                        "found (by /pickfmt, original file)", match
+                    ),
+                )
+        except Exception as e:
+            logger.error(
+                "Failed to send original book file %s (pickfmt): %s",
+                tmp_book_path,
+                e,
+            )
+            await message.reply_text(
+                "Book was extracted, but I failed to send the file."
+            )
+        finally:
+            try:
+                os.remove(tmp_book_path)
+            except OSError:
+                pass
+
+        return
+
+    # Otherwise: convert to requested format
     tmp_out_path, send_name = await asyncio.to_thread(
         extract_and_convert_to_format,
         match,
@@ -862,83 +925,23 @@ async def pickfmt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             await message.reply_document(
                 document=f,
                 filename=send_name or os.path.basename(tmp_out_path),
-                caption=build_safe_caption(f"found (converted to {target_format.upper()})", match),
+                caption=build_safe_caption(
+                    f"found (converted to {target_format.upper()})", match
+                ),
             )
     except Exception as e:
-        logger.error("Failed to send converted file %s: %s", tmp_out_path, e)
+        logger.error(
+            "Failed to send converted file %s (pickfmt, %s): %s",
+            tmp_out_path,
+            target_format,
+            e,
+        )
         await message.reply_text(
             f"Book was converted to {target_format.upper()}, but I failed to send the file."
         )
     finally:
         try:
             os.remove(tmp_out_path)
-        except OSError:
-            pass
-
-
-async def pick(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    /pick <n> – send the n-th result from the last /checkinpx search
-    for this chat+user.
-    """
-    message = update.effective_message
-    if message is None:
-        return
-
-    if not context.args:
-        await message.reply_text("Usage: /pick <number>")
-        return
-
-    try:
-        index = int(context.args[0])
-    except ValueError:
-        await message.reply_text("Please provide a valid number, e.g. /pick 1")
-        return
-
-    key = _cache_key_from_update(update)
-    if key is None or key not in MATCH_CACHE:
-        await message.reply_text(
-            "I don’t have any recent search results for you. "
-            "Run /checkinpx <pattern> first."
-        )
-        return
-
-    matches = MATCH_CACHE[key]
-    if not 1 <= index <= len(matches):
-        await message.reply_text(
-            f"Choice out of range. You have {len(matches)} stored result(s)."
-        )
-        return
-
-    match = matches[index - 1]
-
-    tmp_book_path, send_name = await asyncio.to_thread(
-        extract_book_for_match,
-        match,
-    )
-
-    if not tmp_book_path:
-        await message.reply_text(
-            "This record was found in the index, but the book could not be extracted."
-        )
-        return
-
-    try:
-        with open(tmp_book_path, "rb") as f:
-            await message.reply_document(
-                document=f,
-                filename=send_name or os.path.basename(tmp_book_path),
-                caption=build_safe_caption("found (by /pick)", match),
-            )
-
-    except Exception as e:
-        logger.error("Failed to send picked book file %s: %s", tmp_book_path, e)
-        await message.reply_text(
-            "Book was extracted, but failed to send the file."
-        )
-    finally:
-        try:
-            os.remove(tmp_book_path)
         except OSError:
             pass
 
@@ -962,9 +965,6 @@ def main() -> None:
     )
     application.add_handler(
         CommandHandler(["checkinpx", "c"], check_inpx, filters=allowed_users_filter)
-    )
-    application.add_handler(
-        CommandHandler(["pick", "p"], pick, filters=allowed_users_filter)
     )
     application.add_handler(
     CommandHandler(["pickfmt", "pf"], pickfmt, filters=allowed_users_filter)
