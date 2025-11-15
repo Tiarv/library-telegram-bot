@@ -968,14 +968,14 @@ def main() -> None:
         CommandHandler(
             ["lookup", "look", "search", "find", "l", "s", "f"],
             check_inpx,
-            filters=allowed_filter,
+            filters=allowed_users_filter,
         )
     )
     application.add_handler(
         CommandHandler(
             ["pick", "get", "p", "g"],
             pickfmt,
-            filters=allowed_filter,
+            filters=allowed_users_filter,
         )
     )
     application.add_handler(
