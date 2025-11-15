@@ -666,14 +666,15 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await message.reply_text(
         "/start – say hi\n"
         "/help or /h – this help\n"
-        "/checkout, /check or /c <pattern> – search inside INPX (multiple words = AND filter).\n"
-        "/pickup, /pick or /p <n> [format] – send n-th result from the last search.\n"
+        "/lookup, /search, /find (or /l, /s, /f) <pattern> – "
+        "search inside INPX (multiple words = AND filter).\n"
+        "/pick, /get (or /p, /g) <n> [format] – send n-th result from the last search.\n"
         "  Examples:\n"
-        "    /p 3        – send original file\n"
-        "    /p 3 epub   – convert to EPUB\n"
-        "    /p 3 pdf    – convert to PDF\n"
+        "    /p 3         – send original file\n"
+        "    /p 3 epub    – convert to EPUB\n"
+        "    /p 3 pdf     – convert to PDF\n"
         "Send any text and I'll echo it back."
-)
+    )
 
 async def echo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     message = update.effective_message
@@ -708,7 +709,7 @@ async def check_inpx(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         return
 
     if not context.args:
-        await message.reply_text("Usage: /checkout <pattern>")
+        await message.reply_text("Usage: /lookup <pattern>")
         return
 
     pattern = " ".join(context.args).strip()
@@ -816,14 +817,14 @@ async def pickfmt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     if not context.args:
         await message.reply_text(
-            "Usage: /pickup <number> [format]\n"
+            "Usage: /pick <number> [format]\n"
             "Examples:\n"
             "  /pickup 1        – send original file\n"
-            "  /pick 1 epub     – convert to EPUB\n"
-            "  /p 1 pdf         – convert to PDF"
+            "  /pickup 1 epub   – convert to EPUB\n"
+            "  /pickup 1 pdf    – convert to PDF"
         )
         return
-
+        
     # Parse index
     try:
         index = int(context.args[0])
@@ -841,7 +842,7 @@ async def pickfmt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if key is None or key not in MATCH_CACHE:
         await message.reply_text(
             "I don’t have any recent search results for you. "
-            "Run /checkout <pattern> first."
+            "Run /lookup <pattern> first."
         )
         return
 
@@ -887,7 +888,7 @@ async def pickfmt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                     document=f,
                     filename=send_name or os.path.basename(tmp_book_path),
                     caption=build_safe_caption(
-                        "found (by /pickup, original file)", match
+                        "found (by /pick, original file)", match
                     ),
                 )
         except Exception as e:
@@ -964,10 +965,18 @@ def main() -> None:
         CommandHandler(["help", "h"], help_cmd, filters=allowed_users_filter)
     )
     application.add_handler(
-        CommandHandler(["checkout", "check", "c"], check_inpx, filters=allowed_users_filter)
+        CommandHandler(
+            ["lookup", "look", "search", "find", "l", "s", "f"],
+            check_inpx,
+            filters=allowed_filter,
+        )
     )
     application.add_handler(
-    CommandHandler(["pickup", "pick", "p"], pickfmt, filters=allowed_users_filter)
+        CommandHandler(
+            ["pick", "get", "p", "g"],
+            pickfmt,
+            filters=allowed_filter,
+        )
     )
     application.add_handler(
         MessageHandler(
