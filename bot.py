@@ -666,12 +666,12 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await message.reply_text(
         "/start – say hi\n"
         "/help or /h – this help\n"
-        "/checkinpx or /c <pattern> – search inside INPX (multiple words = AND filter).\n"
-        "/pickfmt or /pf <n> [format] – send n-th result from the last search.\n"
+        "/checkout, /check or /c <pattern> – search inside INPX (multiple words = AND filter).\n"
+        "/pickup, /pick or /p <n> [format] – send n-th result from the last search.\n"
         "  Examples:\n"
-        "    /pf 3        – send original file\n"
-        "    /pf 3 epub   – convert to EPUB\n"
-        "    /pf 3 pdf    – convert to PDF\n"
+        "    /p 3        – send original file\n"
+        "    /p 3 epub   – convert to EPUB\n"
+        "    /p 3 pdf    – convert to PDF\n"
         "Send any text and I'll echo it back."
 )
 
@@ -708,7 +708,7 @@ async def check_inpx(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         return
 
     if not context.args:
-        await message.reply_text("Usage: /checkinpx <pattern>")
+        await message.reply_text("Usage: /checkout <pattern>")
         return
 
     pattern = " ".join(context.args).strip()
@@ -816,11 +816,11 @@ async def pickfmt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     if not context.args:
         await message.reply_text(
-            "Usage: /pickfmt <number> [format]\n"
+            "Usage: /pickup <number> [format]\n"
             "Examples:\n"
-            "  /pickfmt 1        – send original file\n"
-            "  /pickfmt 1 epub   – convert to EPUB\n"
-            "  /pickfmt 1 pdf    – convert to PDF"
+            "  /pickup 1        – send original file\n"
+            "  /pick 1 epub     – convert to EPUB\n"
+            "  /p 1 pdf         – convert to PDF"
         )
         return
 
@@ -829,7 +829,7 @@ async def pickfmt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         index = int(context.args[0])
     except ValueError:
         await message.reply_text(
-            "First argument must be a number, e.g. /pickfmt 1 epub"
+            "First argument must be a number, e.g. /pick 1 epub"
         )
         return
 
@@ -841,7 +841,7 @@ async def pickfmt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if key is None or key not in MATCH_CACHE:
         await message.reply_text(
             "I don’t have any recent search results for you. "
-            "Run /checkinpx <pattern> first."
+            "Run /checkout <pattern> first."
         )
         return
 
@@ -887,7 +887,7 @@ async def pickfmt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                     document=f,
                     filename=send_name or os.path.basename(tmp_book_path),
                     caption=build_safe_caption(
-                        "found (by /pickfmt, original file)", match
+                        "found (by /pickup, original file)", match
                     ),
                 )
         except Exception as e:
@@ -964,10 +964,10 @@ def main() -> None:
         CommandHandler(["help", "h"], help_cmd, filters=allowed_users_filter)
     )
     application.add_handler(
-        CommandHandler(["checkinpx", "c"], check_inpx, filters=allowed_users_filter)
+        CommandHandler(["checkout", "check", "c"], check_inpx, filters=allowed_users_filter)
     )
     application.add_handler(
-    CommandHandler(["pickfmt", "pf"], pickfmt, filters=allowed_users_filter)
+    CommandHandler(["pickup", "pick", "p"], pickfmt, filters=allowed_users_filter)
     )
     application.add_handler(
         MessageHandler(
