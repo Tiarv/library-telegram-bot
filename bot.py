@@ -489,92 +489,6 @@ def search_in_inpx_records(pattern: str, max_collect: int = 100):
 
     return matches, truncated
 
-def extract_and_convert_to_epub(match: dict):
-    """
-    For a single INPX match:
-      1) Extract the original book file (using extract_book_for_match)
-      2) Convert it to EPUB via `ebook-convert`
-      3) Return (epub_path, epub_filename_for_telegram) on success
-         or (None, None) on failure.
-
-    Cleans up temp files on failure and removes the original temp book
-    after successful conversion.
-    """
-    tmp_book_path, send_name = extract_book_for_match(match)
-    if not tmp_book_path:
-        return None, None
-
-    # Derive a nice EPUB filename
-    base_name = os.path.splitext(send_name or os.path.basename(tmp_book_path))[0]
-    send_epub_name = base_name + ".epub"
-
-    # Create temp target path for EPUB; ebook-convert will write into it
-    fd, tmp_epub_path = tempfile.mkstemp(suffix=".epub")
-    os.close(fd)
-
-    try:
-        cmd = ["ebook-convert", tmp_book_path, tmp_out_path]
-
-        # Prepare env for subprocess
-        env = os.environ.copy()
-
-        result = subprocess.run(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            env=env,
-        )
-
-        if result.returncode != 0:
-            logger.error(
-                "ebook-convert failed for %s -> %s: %s",
-                tmp_book_path,
-                tmp_out_path,
-                result.stderr,
-            )
-            try:
-                os.remove(tmp_out_path)
-            except OSError:
-                pass
-            try:
-                os.remove(tmp_book_path)
-            except OSError:
-                pass
-            return None, None
-
-
-    except FileNotFoundError:
-        logger.error("ebook-convert binary not found in PATH")
-        try:
-            os.remove(tmp_epub_path)
-        except OSError:
-            pass
-        try:
-            os.remove(tmp_book_path)
-        except OSError:
-            pass
-        return None, None
-    except Exception as e:
-        logger.error("Error running ebook-convert on %s: %s", tmp_book_path, e)
-        try:
-            os.remove(tmp_epub_path)
-        except OSError:
-            pass
-        try:
-            os.remove(tmp_book_path)
-        except OSError:
-            pass
-        return None, None
-
-    # Conversion succeeded; we can delete the original temp file
-    try:
-        os.remove(tmp_book_path)
-    except OSError:
-        pass
-
-    return tmp_epub_path, send_epub_name
-
 
 def extract_and_convert_to_format(match: dict, target_format: str):
     """
@@ -1028,74 +942,6 @@ async def pick(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         except OSError:
             pass
 
-async def pick_epub(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    /pickepub <n> or /pe <n> – send the n-th result from the last /checkinpx search
-    as an EPUB (converted via ebook-convert).
-    """
-    message = update.effective_message
-    if message is None:
-        return
-
-    if not context.args:
-        await message.reply_text("Usage: /pickepub <number>")
-        return
-
-    try:
-        index = int(context.args[0])
-    except ValueError:
-        await message.reply_text("Please provide a valid number, e.g. /pickepub 1")
-        return
-
-    key = _cache_key_from_update(update)
-    if key is None or key not in MATCH_CACHE:
-        await message.reply_text(
-            "I don’t have any recent search results for you. "
-            "Run /checkinpx <pattern> first."
-        )
-        return
-
-    matches = MATCH_CACHE[key]
-    if not 1 <= index <= len(matches):
-        await message.reply_text(
-            f"Choice out of range. You have {len(matches)} stored result(s)."
-        )
-        return
-
-    match = matches[index - 1]
-
-    # Heavy I/O + subprocess in a thread
-    tmp_epub_path, send_name = await asyncio.to_thread(
-        extract_and_convert_to_epub,
-        match,
-    )
-
-    if not tmp_epub_path:
-        await message.reply_text(
-            "This record was found, but I couldn't extract or convert the book to EPUB."
-        )
-        return
-
-    try:
-        with open(tmp_epub_path, "rb") as f:
-            await message.reply_document(
-                document=f,
-                filename=send_name or os.path.basename(tmp_epub_path),
-                caption=build_safe_caption("found (converted to EPUB)", match),
-            )
-
-    except Exception as e:
-        logger.error("Failed to send EPUB file %s: %s", tmp_epub_path, e)
-        await message.reply_text(
-            "Book was converted to EPUB, but I failed to send the file."
-        )
-    finally:
-        try:
-            os.remove(tmp_epub_path)
-        except OSError:
-            pass
-
-
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     logger.error("Exception while handling an update:", exc_info=context.error)
@@ -1119,9 +965,6 @@ def main() -> None:
     )
     application.add_handler(
         CommandHandler(["pick", "p"], pick, filters=allowed_users_filter)
-    )
-    application.add_handler(
-    CommandHandler(["pickepub", "pe"], pick_epub, filters=allowed_users_filter)
     )
     application.add_handler(
     CommandHandler(["pickfmt", "pf"], pickfmt, filters=allowed_users_filter)
