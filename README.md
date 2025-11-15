@@ -7,6 +7,7 @@ Another telegram bot that provides interface to INPX-based libraries
 ## Installation:
 
 ```
+# apt install calibre 
 # adduser library
 # su - library
 $ python3 -m venv venv
