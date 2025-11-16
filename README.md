@@ -18,5 +18,6 @@ $ git clone https://github.com/Tiarv/library-telegram-bot.git
 $ cd library-telegram-bot.git
 # populate bot.conf with your credentials
 $ vim bot.conf
+$ chmod 0400 bot.*
 $ python3 ./bot.py
 ```
