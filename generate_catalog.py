@@ -10,6 +10,7 @@ import tempfile
 import logging
 import configparser
 from typing import Any, Dict, List, Tuple
+from collections import Counter
 
 os.umask(0o027)
 
@@ -175,6 +176,90 @@ def catalog_cache_is_valid(current_sigs: List[Dict[str, Any]]) -> bool:
 
     return True
 
+def read_inpx_field_names_from_structure(inpx_path: str) -> list[str] | None:
+    """
+    Try to read field names from structure.info inside a given INPX archive.
+    Returns a list of names (in order) or None if not present/parsable.
+    """
+    try:
+        with zipfile.ZipFile(inpx_path, "r") as zf:
+            if "structure.info" not in zf.namelist():
+                return None
+            with zf.open("structure.info", "r") as f:
+                raw = f.read()
+    except Exception as e:
+        logger.warning("Failed to read structure.info from %s: %s", inpx_path, e)
+        return None
+
+    text = ""
+    # Try a couple of encodings; utf-8 first, cp1251 common for Russian INPX
+    for enc in ("utf-8", "cp1251", "latin-1"):
+        try:
+            text = raw.decode(enc)
+            break
+        except UnicodeDecodeError:
+            text = ""
+    if not text:
+        return None
+
+    # Take the first non-empty, non-comment line that looks like "A;B;C;..."
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        if line.startswith("#") or line.startswith(";"):
+            continue
+        if ";" not in line:
+            continue
+        parts = [p.strip() for p in line.split(";")]
+        parts = [p for p in parts if p]
+        if parts:
+            return parts
+
+    return None
+
+
+def build_global_field_names(inpx_files: list[str], max_fields: int) -> list[str]:
+    """
+    Build a global list of column names for positions 1..max_fields.
+
+    For each field index i, look at all structure.info definitions across
+    all INPX that have a name at that position, and pick the most frequent
+    name. If no name is known for that index, fall back to 'FieldN'.
+    """
+    if max_fields <= 0:
+        return []
+
+    counters: list[Counter] = [Counter() for _ in range(max_fields)]
+
+    for path in inpx_files:
+        path = path.strip()
+        if not path or not os.path.isfile(path):
+            continue
+        names = read_inpx_field_names_from_structure(path)
+        if not names:
+            continue
+
+        for idx, raw_name in enumerate(names):
+            if idx >= max_fields:
+                break
+            name = raw_name.strip()
+            if not name:
+                continue
+            # You can normalize case here if you like, e.g. name.upper()
+            counters[idx][name] += 1
+
+    columns: list[str] = []
+    for i in range(max_fields):
+        if counters[i]:
+            # Most common name for this position
+            name, _ = counters[i].most_common(1)[0]
+            columns.append(name)
+        else:
+            columns.append(f"Field{i+1}")
+
+    return columns
+
 
 # --- Catalog generation ---
 
@@ -234,7 +319,8 @@ def generate_catalog_parts(inpx_files: List[str]) -> List[str]:
         logger.warning("No INPX records found; catalog will be empty.")
         max_fields = 0
 
-    field_columns = [f"Field{i}" for i in range(1, max_fields + 1)]
+    # Build smarter column names using structure.info where available
+    field_columns = build_global_field_names(inpx_files, max_fields)
     meta_columns = ["source_inpx", "index_inner_name"]
     header = field_columns + meta_columns
 
