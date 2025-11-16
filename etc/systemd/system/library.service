@@ -1,0 +1,29 @@
+[Unit]
+Description=Telegram INPX Library Bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+# Run as the unprivileged bot user
+User=library
+Group=library
+
+# Where bot.py and bot.conf live
+WorkingDirectory=/home/library
+
+# Use the virtualenv Python
+ExecStart=/home/library/venv/bin/python /home/library/bot.py
+
+# Restart policy
+Restart=on-failure
+RestartSec=10
+
+# Log to the journal (default, but explicit doesn't hurt)
+StandardOutput=journal
+StandardError=journal
+
+# Give it a bit of time to shut down gracefully
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target
