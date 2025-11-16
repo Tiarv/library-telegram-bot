@@ -1317,6 +1317,39 @@ async def export_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
             )
 
 
+async def log_unauthorized(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user = update.effective_user
+    chat = update.effective_chat
+    message = update.effective_message
+
+    user_id = user.id if user else None
+    username = user.username if user else None
+    first_name = getattr(user, "first_name", None) if user else None
+    last_name = getattr(user, "last_name", None) if user else None
+
+    chat_id = chat.id if chat else None
+    chat_type = chat.type if chat else None
+
+    text = None
+    if message:
+        if message.text:
+            text = message.text
+        elif message.caption:
+            text = message.caption
+
+    logger.warning(
+        "Unauthorized update: user_id=%s username=%r first_name=%r last_name=%r "
+        "chat_id=%s chat_type=%s text=%r",
+        user_id,
+        username,
+        first_name,
+        last_name,
+        chat_id,
+        chat_type,
+        text,
+    )
+
+    return
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     logger.error("Exception while handling an update:", exc_info=context.error)
@@ -1365,6 +1398,16 @@ def main() -> None:
             echo,
         )
     )
+    # Log any updates from users who are NOT in ALLOWED_USER_IDS
+    application.add_handler(
+        MessageHandler(
+            ~allowed_users_filter & filters.ALL,
+            log_unauthorized,
+        )
+    )
+
+    application.add_error_handler(error_handler)
+
 
     application.add_error_handler(error_handler)
 
