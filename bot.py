@@ -942,7 +942,7 @@ async def check_inpx(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
             ext = rec.get("ext") or "<?>"
             inpx_name = os.path.basename(rec.get("inpx_path") or "") or "<?>"
             lines.append(
-                f"{idx}) {author} — {title} [ext: {ext}] (in {inpx_name})"
+                f"{idx}) {author} — {title} ({ext})"
             )
 
         shown = min(total_matches, MAX_MATCH_DISPLAY)
