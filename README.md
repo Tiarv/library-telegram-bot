@@ -34,5 +34,6 @@ $ cd library-telegram-bot.git
 # populate bot.conf with your credentials
 $ vim bot.conf
 $ chmod 0400 bot.*
+$ python3 ./generate_catalog.py
 $ python3 ./bot.py
 ```
