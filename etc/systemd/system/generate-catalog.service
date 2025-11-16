@@ -1,0 +1,15 @@
+[Unit]
+Description=Generate INPX catalog CSV parts
+
+[Service]
+Type=oneshot
+User=librarian
+Group=librarian
+WorkingDirectory=/home/librarian
+
+# Run the generator with the venv Python
+ExecStart=/home/librarian/venv/bin/python /home/librarian/generate_catalog.py
+
+# Optional, but nice for logs
+StandardOutput=journal
+StandardError=journal
