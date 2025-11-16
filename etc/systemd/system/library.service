@@ -16,7 +16,7 @@ ExecStart=/home/library/venv/bin/python /home/library/library-telegram-bot.git/b
 
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths=/home/librarian/cache
+ReadWritePaths=/home/library/cache
 NoNewPrivileges=yes
 CapabilityBoundingSet=
 AmbientCapabilities=
