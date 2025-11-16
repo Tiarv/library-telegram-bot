@@ -14,6 +14,24 @@ WorkingDirectory=/home/library/library-telegram-bot.git
 # Use the virtualenv Python
 ExecStart=/home/library/venv/bin/python /home/library/library-telegram-bot.git/bot.py
 
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/librarian/cache
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+PrivateDevices=yes
+PrivateTmp=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+RestrictNamespaces=yes
+RestrictAddressFamilies=AF_INET AF_NETLINK
+
 # Restart policy
 Restart=on-failure
 RestartSec=10
