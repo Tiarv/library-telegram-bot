@@ -45,21 +45,37 @@ def load_inpx_files_from_config(config_path: str) -> List[str]:
         sys.exit(1)
 
     inpx_files: List[str] = []
+
+    # Each line may contain one or more comma-separated entries,
+    # optionally quoted, optionally with trailing commas and comments.
     for line in raw_inpx.splitlines():
         line = line.strip()
         if not line:
             continue
+
+        # Strip inline comments
         for comment_char in ("#", ";"):
             if comment_char in line:
                 line = line.split(comment_char, 1)[0].strip()
         if not line:
             continue
-        # allow quotes around paths
-        if (line.startswith('"') and line.endswith('"')) or (
-            line.startswith("'") and line.endswith("'")
-        ):
-            line = line[1:-1]
-        inpx_files.append(os.path.expanduser(line))
+
+        # Now split by commas in case the user used comma-separated style
+        for part in line.split(","):
+            part = part.strip()
+            if not part:
+                continue
+
+            # Strip optional surrounding quotes
+            if (part.startswith('"') and part.endswith('"')) or (
+                part.startswith("'") and part.endswith("'")
+            ):
+                part = part[1:-1].strip()
+
+            if not part:
+                continue
+
+            inpx_files.append(os.path.expanduser(part))
 
     return inpx_files
 
