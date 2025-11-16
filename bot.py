@@ -900,12 +900,13 @@ async def check_inpx(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
             "Please either refine your query (add more words for AND filtering),"
         )
         header_lines.append(
-            "or re-run the command with `--all` at the end if you really want "
+            "or re-run the command with `+all` at the end if you really want "
             "to see the full list."
         )
         header_lines.append("")
         header_lines.append("Example:")
         header_lines.append(f"/lookup {original_pattern_for_echo} --all")
+        header_lines.append(f"/lookup {original_pattern_for_echo} +all")
 
         await message.reply_text("\n".join(header_lines))
         return
