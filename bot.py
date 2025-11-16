@@ -43,6 +43,8 @@ MAX_MATCH_COLLECT = 9999
 MAX_MATCH_DISPLAY = 9999
 TELEGRAM_MAX_MESSAGE_LEN = 3900
 MAX_CAPTION_LEN = 3001
+CHECK_CONFIRM_THRESHOLD = 20  # how many matches to list without asking
+
 
 SEPARATORS = ("\x04", "\t", ";", "|")
 
@@ -835,7 +837,21 @@ async def check_inpx(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         await message.reply_text("Usage: /lookup <pattern>")
         return
 
-    pattern = " ".join(context.args).strip()
+    # Detect optional --all / +all at the end
+    show_all = False
+    args = list(context.args)
+    if args and args[-1].lower() in ("--all", "+all"):
+        show_all = True
+        args = args[:-1]
+
+    if not args:
+        await message.reply_text("Usage: /lookup <pattern>")
+        return
+
+    # Keep this string so we can show the user how to re-run with --all
+    original_pattern_for_echo = " ".join(args).strip()
+
+    pattern = original_pattern_for_echo
     if not pattern:
         await message.reply_text("Pattern must not be empty.")
         return
@@ -846,7 +862,7 @@ async def check_inpx(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         pattern,
         MAX_MATCH_COLLECT,
     )
-
+    
     if not matches:
         await message.reply_text("not found")
         return
@@ -856,8 +872,46 @@ async def check_inpx(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     if key is not None:
         MATCH_CACHE[key] = matches
 
+    total_matches = len(matches)
+
+    # If there are many results and user did NOT explicitly ask for all,
+    # don't spam the chat – ask them to re-run with --all
+    if total_matches > CHECK_CONFIRM_THRESHOLD and not show_all:
+        header_lines = []
+
+        if truncated:
+            header_lines.append(
+                f"Found at least {total_matches} matching record(s). "
+                f"Search was truncated at {MAX_MATCH_COLLECT} collected matches."
+            )
+        else:
+            header_lines.append(
+                f"Found {total_matches} matching record(s)."
+            )
+
+        header_lines.append(
+            f"This exceeds the current auto-display limit of {CHECK_CONFIRM_THRESHOLD}."
+        )
+        header_lines.append("")
+        header_lines.append(
+            "To avoid flooding the chat, I won't list them automatically."
+        )
+        header_lines.append(
+            "Please either refine your query (add more words for AND filtering),"
+        )
+        header_lines.append(
+            "or re-run the command with `--all` at the end if you really want "
+            "to see the full list."
+        )
+        header_lines.append("")
+        header_lines.append("Example:")
+        header_lines.append(f"/lookup {original_pattern_for_echo} --all")
+
+        await message.reply_text("\n".join(header_lines))
+        return
+
     # Multiple matches: show list, no file yet
-    if len(matches) > 1:
+    if total_matches > 1:
         lines: list[str] = []
         for idx, rec in enumerate(matches[:MAX_MATCH_DISPLAY], start=1):
             author = rec.get("author") or "<?>"
@@ -868,9 +922,9 @@ async def check_inpx(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
                 f"{idx}) {author} — {title} [ext: {ext}] (in {inpx_name})"
             )
 
-        shown = min(len(matches), MAX_MATCH_DISPLAY)
+        shown = min(total_matches, MAX_MATCH_DISPLAY)
 
-        header = f"Multiple matches ({len(matches)}"
+        header = f"Multiple matches ({total_matches}"
         if truncated:
             header += f"+, search truncated at {MAX_MATCH_COLLECT}"
         header += ").\n"
