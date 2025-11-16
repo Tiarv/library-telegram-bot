@@ -143,10 +143,8 @@ def split_record(line: str):
     line = line.rstrip("\r\n")
     for sep in SEPARATORS:
         if sep in line:
-            parts = line.split(sep)
-            return sep, parts
+            return sep, line.split(sep)
     return None, None
-
 
 
 def load_config() -> None:
@@ -368,21 +366,38 @@ def parse_inpx_record(line: str) -> dict | None:
       10: extension
       13: container path
 
-    Returns dict or None.
+    Returns dict with:
+      {
+        "author": str,
+        "title": str,
+        "lib_id": str,
+        "container_relpath": str,
+        "inner_book_name": str,
+        "ext": str,
+        "fields": list[str],
+      }
+    or None on failure.
     """
     _, parts = split_record(line)
-    if parts is None or len(parts) < 13:
+    if parts is None:
         return None
 
-    author = parts[0].strip()
-    title = parts[2].strip()
-    filename = parts[5].strip()
-    ext = parts[9].strip()
-    container_relpath = parts[12].strip()
+    # Need at least 13 fields (1-based -> index 12)
+    if len(parts) < 13:
+        return None
+
+    # Fixed positions (0-based indices)
+    author = parts[0].strip()              # field 1
+    title = parts[2].strip()               # field 3
+    filename = parts[5].strip()            # field 6
+    lib_id = parts[7].strip()              # field 8
+    ext = parts[9].strip()                 # field 10
+    container_relpath = parts[12].strip()  # field 13
 
     if not filename or not ext or not container_relpath:
         return None
 
+    # Normalize ext and build inner_book_name
     ext_clean = ext.lstrip(".")
     if not ext_clean:
         return None
@@ -401,8 +416,9 @@ def parse_inpx_record(line: str) -> dict | None:
         "container_relpath": container_relpath,
         "inner_book_name": inner_book_name,
         "ext": ext,
-        "fields": parts,  # <- new: full raw fields from INPX record
+        "fields": parts,  # full raw fields for /info
     }
+
 
 def resolve_container_path(inpx_path: str, relpath: str) -> str | None:
     """
