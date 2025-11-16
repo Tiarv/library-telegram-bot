@@ -2,6 +2,7 @@
 import csv
 import json
 import os
+import stat
 import sys
 import time
 import zipfile
@@ -9,6 +10,8 @@ import tempfile
 import logging
 import configparser
 from typing import Any, Dict, List, Tuple
+
+os.umask(0o027)
 
 # --- Logging setup ---
 logging.basicConfig(
@@ -129,7 +132,7 @@ def load_catalog_meta() -> Dict[str, Any] | None:
         return None
 
 def save_catalog_meta(meta: Dict[str, Any]) -> None:
-    os.makedirs(CACHE_DIR, exist_ok=True)
+    os.makedirs(CACHE_DIR, mode=0o770, exist_ok=True)
     tmp_path = CATALOG_META_PATH + ".tmp"
     try:
         with open(tmp_path, "w", encoding="utf-8") as f:
@@ -296,6 +299,7 @@ def generate_catalog_zip(inpx_files: List[str]) -> str | None:
             with zipfile.ZipFile(tmp_zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
                 zf.write(tmp_csv_path, arcname="catalog.csv")
             os.replace(tmp_zip_path, CATALOG_ZIP_PATH)
+            os.chmod(CATALOG_ZIP_PATH, 0o640)
         except Exception as e:
             logger.error("Failed to create catalog zip: %s", e)
             try:
