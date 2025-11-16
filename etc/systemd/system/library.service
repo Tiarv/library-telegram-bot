@@ -9,10 +9,10 @@ User=library
 Group=library
 
 # Where bot.py and bot.conf live
-WorkingDirectory=/home/library
+WorkingDirectory=/home/library/library-telegram-bot.git
 
 # Use the virtualenv Python
-ExecStart=/home/library/venv/bin/python /home/library/bot.py
+ExecStart=/home/library/venv/bin/python /home/library/library-telegram-bot.git/bot.py
 
 # Restart policy
 Restart=on-failure
