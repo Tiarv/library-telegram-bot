@@ -33,12 +33,15 @@ BOT_TOKEN: str | None = None
 # key: (chat_id, user_id) -> list of match dicts
 MATCH_CACHE: dict[tuple[int, int], list[dict]] = {}
 INPX_SCHEMA_CACHE: dict[str, dict[str, int]] = {}
+INPX_FIELD_NAMES_CACHE: dict[str, list[str]] = {}
+
 MAX_MATCH_COLLECT = 9999
 MAX_MATCH_DISPLAY = 9999
 TELEGRAM_MAX_MESSAGE_LEN = 3900
 MAX_CAPTION_LEN = 3001
 
 SEPARATORS = ("\x04", "\t", ";", "|")
+
 
 def format_mb(bytes_size: int) -> str:
     """
@@ -353,6 +356,72 @@ def load_inpx_schema(inpx_path: str) -> dict[str, int]:
             e,
         )
         return use_default("exception")
+
+
+def _read_inpx_field_names(inpx_path: str) -> list[str] | None:
+    """
+    Try to read structure.info from the given INPX archive and return
+    a list of field names (in order). Returns None if not present or
+    cannot be parsed.
+    """
+    # Cached?
+    if inpx_path in INPX_FIELD_NAMES_CACHE:
+        return INPX_FIELD_NAMES_CACHE[inpx_path]
+
+    names: list[str] | None = None
+
+    try:
+        with zipfile.ZipFile(inpx_path, "r") as zf:
+            # structure.info is the conventional name
+            if "structure.info" not in zf.namelist():
+                INPX_FIELD_NAMES_CACHE[inpx_path] = None
+                return None
+
+            with zf.open("structure.info", "r") as f:
+                raw = f.read()
+
+        # Try UTF-8 first, fall back to cp1251 (common for Russian INPX files)
+        text: str
+        try:
+            text = raw.decode("utf-8")
+        except UnicodeDecodeError:
+            try:
+                text = raw.decode("cp1251")
+            except UnicodeDecodeError:
+                logger.warning(
+                    "Failed to decode structure.info in %s as utf-8 or cp1251",
+                    inpx_path,
+                )
+                INPX_FIELD_NAMES_CACHE[inpx_path] = None
+                return None
+
+        # Find the first non-empty, non-comment line that looks like a structure
+        # (semicolon-separated field names)
+        for line in text.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            # Treat lines starting with # or ; as comments
+            if line.startswith("#") or line.startswith(";"):
+                continue
+            if ";" not in line:
+                continue
+
+            # This is probably the structure line
+            parts = [p.strip() for p in line.split(";") if p.strip()]
+            if parts:
+                names = parts
+                break
+
+    except Exception as e:
+        logger.warning(
+            "Failed to read structure.info from %s: %s",
+            inpx_path,
+            e,
+        )
+
+    INPX_FIELD_NAMES_CACHE[inpx_path] = names
+    return names
 
 
 def parse_inpx_record(line: str) -> dict | None:
@@ -1050,24 +1119,33 @@ async def info_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     lines = []
     lines.append("INPX record details:")
     lines.append("")
+
+    inpx_path = match.get("inpx_path") or ""
+    field_names = _read_inpx_field_names(inpx_path) if inpx_path else None
+
     for i, value in enumerate(fields, start=1):
         value = value.strip()
         if not value:
             value = "«empty»"
-        lines.append(f"Field {i}: {value}")
+
+        if field_names and i <= len(field_names):
+            label = field_names[i - 1]
+        else:
+            label = f"Field {i}"
+
+        # You can normalize label if you want: label = label.lower()
+        lines.append(f"{label}: {value}")
+
     lines.append("")
     lines.append(f"Container INPX: {os.path.basename(match.get('inpx_path') or '<?>')}")
     lines.append(f"Index file inside INPX: {match.get('index_inner_name') or '<?>'}")
     lines.append(f"Container path (relative): {match.get('container_relpath') or '<?>'}")
     lines.append(f"Inner book name: {match.get('inner_book_name') or '<?>'}")
-    lines.append(f"Detected extension: {match.get('ext') or '<?>'}")
+    lines.append(f"Detected extension: {match.get('ext') or('<?>' )}")
     lines.append("")
     lines.append(f"Actual book size: {size_str}")
 
     text = "\n".join(lines)
-
-    # If you're worried about length, you can reuse your split_text_for_telegram,
-    # but INPX records tend to be short enough that one message is fine.
     await message.reply_text(text)
 
 
