@@ -4,6 +4,15 @@ Another telegram bot that provides interface to INPX-based libraries
 
 (libraries themselves are not included, procure them on your own)
 
+
+## What it can do:
+
+* A lookup inside multiples of INPX catalogs simultaneously
+* Retrieve objects' metadata from INPX catalogs
+* Retrieve objects from INPX-based library into a telegram chat
+* Convert objects' formats pre retrieval ("ebook-convert" from Calibre needed)
+
+
 ## Installation:
 
 ### Prerequisites
