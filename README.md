@@ -6,8 +6,14 @@ Another telegram bot that provides interface to INPX-based libraries
 
 ## Installation:
 
+### Prerequisites
 ```
-# apt install calibre 
+calibre - "ebook-convert" needed for format conversion (e.g. fb2 > epub)
+feel free to skip it if you do not want server side conversions
+```
+
+### Setup
+```
 # adduser library
 # su - library
 $ python3 -m venv venv
