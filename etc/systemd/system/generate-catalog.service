@@ -8,7 +8,7 @@ Group=library
 WorkingDirectory=/home/library
 
 # Run the generator with the venv Python
-ExecStart=/home/library/venv/bin/python /home/library/generate_catalog.py
+ExecStart=/home/library/venv/bin/python /home/library/library-telegram-bot.git/generate_catalog.py
 
 # Optional, but nice for logs
 StandardOutput=journal
