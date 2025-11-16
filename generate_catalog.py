@@ -13,6 +13,8 @@ from typing import Any, Dict, List, Tuple
 
 os.umask(0o027)
 
+ROWS_PER_PART = 800_000
+
 # --- Logging setup ---
 logging.basicConfig(
     level=logging.INFO,
@@ -23,7 +25,6 @@ logger = logging.getLogger("catalog_generator")
 # --- Paths ---
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CACHE_DIR = os.path.join(BASE_DIR, "cache")
-CATALOG_ZIP_PATH = os.path.join(CACHE_DIR, "catalog.csv.zip")
 CATALOG_META_PATH = os.path.join(CACHE_DIR, "catalog_meta.json")
 CATALOG_VERSION = 1  # bump if CSV schema changes
 
@@ -145,12 +146,7 @@ def save_catalog_meta(meta: Dict[str, Any]) -> None:
         except OSError:
             pass
 
-def catalog_cache_is_valid(
-    current_sigs: List[Dict[str, Any]],
-) -> bool:
-    if not os.path.isfile(CATALOG_ZIP_PATH):
-        return False
-
+def catalog_cache_is_valid(current_sigs: List[Dict[str, Any]]) -> bool:
     meta = load_catalog_meta()
     if not meta:
         return False
@@ -172,7 +168,13 @@ def catalog_cache_is_valid(
         if prev_map.get(path) != sig:
             return False
 
+    # Optional: require at least some parts info
+    parts = meta.get("parts")
+    if not isinstance(parts, list) or not parts:
+        return False
+
     return True
+
 
 # --- Catalog generation ---
 
@@ -212,7 +214,16 @@ def discover_max_fields(inpx_files: List[str]) -> int:
             continue
     return max_fields
 
-def generate_catalog_zip(inpx_files: List[str]) -> str | None:
+
+def generate_catalog_parts(inpx_files: List[str]) -> List[str]:
+    """
+    Generate catalog in multiple parts:
+      cache/catalog-part01.csv.zip
+      cache/catalog-part02.csv.zip
+      ...
+
+    Returns a list of absolute paths to the zip files.
+    """
     import zipfile
 
     os.makedirs(CACHE_DIR, exist_ok=True)
@@ -224,97 +235,173 @@ def generate_catalog_zip(inpx_files: List[str]) -> str | None:
         max_fields = 0
 
     field_columns = [f"Field{i}" for i in range(1, max_fields + 1)]
-    meta_columns = [
-        "source_inpx",
-        "index_inner_name",
-    ]
+    meta_columns = ["source_inpx", "index_inner_name"]
     header = field_columns + meta_columns
 
-    fd, tmp_csv_path = tempfile.mkstemp(suffix=".csv")
-    os.close(fd)
+    # Clean old parts
+    for name in os.listdir(CACHE_DIR):
+        if name.startswith("catalog-part") and name.endswith(".csv.zip"):
+            try:
+                os.remove(os.path.join(CACHE_DIR, name))
+            except OSError:
+                pass
 
-    total_records = 0
+    part_paths: List[str] = []
 
-    try:
-        with open(tmp_csv_path, "w", encoding="utf-8", newline="") as csv_file:
-            writer = csv.writer(csv_file)
-            writer.writerow(header)
+    part_index = 1
+    rows_in_part = 0
+    csv_file = None
+    writer = None
+    tmp_csv_path = None
 
-            for inpx_path in inpx_files:
-                inpx_path = inpx_path.strip()
-                if not inpx_path or not os.path.isfile(inpx_path):
-                    continue
+    def start_new_part():
+        nonlocal part_index, rows_in_part, csv_file, writer, tmp_csv_path
+        # Close/remove leftover temp from previous part
+        if csv_file:
+            csv_file.close()
+            csv_file = None
+        if tmp_csv_path:
+            try:
+                os.remove(tmp_csv_path)
+            except OSError:
+                pass
+            tmp_csv_path = None
 
-                logger.info("Processing INPX: %s", inpx_path)
-                try:
-                    with zipfile.ZipFile(inpx_path, "r") as zf:
-                        for inner_name in zf.namelist():
-                            try:
-                                with zf.open(inner_name, "r") as f:
-                                    for raw_line in f:
-                                        try:
-                                            line = raw_line.decode("utf-8", errors="ignore")
-                                        except Exception:
-                                            continue
-                                        if not line.strip():
-                                            continue
-                                        _, parts = split_record(line)
-                                        if parts is None:
-                                            continue
+        fd, tmp_csv_local = tempfile.mkstemp(
+            suffix=f"-part{part_index:02d}.csv"
+        )
+        os.close(fd)
+        csv_file_local = open(
+            tmp_csv_local, "w", encoding="utf-8", newline=""
+        )
+        csv_writer = csv.writer(csv_file_local)
+        csv_writer.writerow(header)
 
-                                        row_fields = [p.strip() for p in parts]
-                                        if len(row_fields) < max_fields:
-                                            row_fields.extend(
-                                                [""] * (max_fields - len(row_fields))
-                                            )
-                                        elif len(row_fields) > max_fields:
-                                            row_fields = row_fields[:max_fields]
+        csv_file = csv_file_local
+        writer = csv_writer
+        tmp_csv_path = tmp_csv_local
+        rows_in_part = 0
+        logger.info("Started new CSV part %d", part_index)
 
-                                        meta = [
-                                            inpx_path,
-                                            inner_name,
-                                        ]
-                                        writer.writerow(row_fields + meta)
-                                        total_records += 1
-                            except Exception as e:
-                                logger.warning(
-                                    "Failed to read inner file %s in %s: %s",
-                                    inner_name,
-                                    inpx_path,
-                                    e,
-                                )
-                                continue
-                except Exception as e:
-                    logger.warning(
-                        "Failed to open INPX file %s during catalog generation: %s",
-                        inpx_path,
-                        e,
-                    )
-                    continue
+    def finalize_part():
+        nonlocal part_index, rows_in_part, csv_file, writer, tmp_csv_path, part_paths
+        if not csv_file or not tmp_csv_path:
+            return
 
-        logger.info("CSV generation finished, total records: %d", total_records)
+        csv_file.close()
+        csv_file = None
 
-        tmp_zip_path = CATALOG_ZIP_PATH + ".tmp"
+        part_zip_name = f"catalog-part{part_index:02d}.csv.zip"
+        part_zip_path = os.path.join(CACHE_DIR, part_zip_name)
+        tmp_zip_path = part_zip_path + ".tmp"
+
         try:
-            with zipfile.ZipFile(tmp_zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
-                zf.write(tmp_csv_path, arcname="catalog.csv")
-            os.replace(tmp_zip_path, CATALOG_ZIP_PATH)
-            os.chmod(CATALOG_ZIP_PATH, 0o640)
+            with zipfile.ZipFile(
+                tmp_zip_path, "w", compression=zipfile.ZIP_DEFLATED
+            ) as zf:
+                zf.write(tmp_csv_path, arcname=f"catalog-part{part_index:02d}.csv")
+            os.replace(tmp_zip_path, part_zip_path)
+            part_paths.append(part_zip_path)
+            logger.info(
+                "Finalized part %d -> %s (rows: %d)",
+                part_index,
+                part_zip_path,
+                rows_in_part,
+            )
         except Exception as e:
-            logger.error("Failed to create catalog zip: %s", e)
+            logger.error("Failed to create catalog zip for part %d: %s", part_index, e)
             try:
                 os.remove(tmp_zip_path)
             except OSError:
                 pass
-            return None
-    finally:
-        try:
-            os.remove(tmp_csv_path)
-        except OSError:
-            pass
+        finally:
+            try:
+                os.remove(tmp_csv_path)
+            except OSError:
+                pass
+            tmp_csv_path = None
+            rows_in_part = 0
+            part_index += 1
 
-    logger.info("Catalog zip created at %s", CATALOG_ZIP_PATH)
-    return CATALOG_ZIP_PATH
+    start_new_part()
+    total_records = 0
+
+    try:
+        for inpx_path in inpx_files:
+            inpx_path = inpx_path.strip()
+            if not inpx_path or not os.path.isfile(inpx_path):
+                continue
+
+            logger.info("Processing INPX: %s", inpx_path)
+            try:
+                with zipfile.ZipFile(inpx_path, "r") as zf:
+                    for inner_name in zf.namelist():
+                        try:
+                            with zf.open(inner_name, "r") as f:
+                                for raw_line in f:
+                                    try:
+                                        line = raw_line.decode("utf-8", errors="ignore")
+                                    except Exception:
+                                        continue
+                                    if not line.strip():
+                                        continue
+
+                                    _, parts = split_record(line)
+                                    if parts is None:
+                                        continue
+
+                                    row_fields = [p.strip() for p in parts]
+                                    if len(row_fields) < max_fields:
+                                        row_fields.extend(
+                                            [""] * (max_fields - len(row_fields))
+                                        )
+                                    elif len(row_fields) > max_fields:
+                                        row_fields = row_fields[:max_fields]
+
+                                    meta = [inpx_path, inner_name]
+                                    writer.writerow(row_fields + meta)
+                                    rows_in_part += 1
+                                    total_records += 1
+
+                                    if rows_in_part >= ROWS_PER_PART:
+                                        finalize_part()
+                                        start_new_part()
+                        except Exception as e:
+                            logger.warning(
+                                "Failed to read inner file %s in %s: %s",
+                                inner_name,
+                                inpx_path,
+                                e,
+                            )
+                            continue
+            except Exception as e:
+                logger.warning(
+                    "Failed to open INPX file %s during catalog generation: %s",
+                    inpx_path,
+                    e,
+                )
+                continue
+
+        # Finalize last part if it has any rows
+        if rows_in_part > 0 and csv_file:
+            finalize_part()
+    finally:
+        if csv_file:
+            csv_file.close()
+        if tmp_csv_path:
+            try:
+                os.remove(tmp_csv_path)
+            except OSError:
+                pass
+
+    logger.info(
+        "Catalog generation finished, total records: %d, parts: %d",
+        total_records,
+        len(part_paths),
+    )
+    return part_paths
+
+
 
 # --- Main entry point ---
 
@@ -333,18 +420,20 @@ def main() -> None:
         return
 
     logger.info("Catalog cache is missing or outdated; regenerating...")
-    zip_path = generate_catalog_zip(inpx_files)
-    if not zip_path:
-        logger.error("Failed to generate catalog.")
+    part_paths = generate_catalog_parts(inpx_files)
+    if not part_paths:
+        logger.error("Failed to generate any catalog parts.")
         sys.exit(1)
 
     meta = {
         "version": CATALOG_VERSION,
         "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "inpx_files": sigs,
+        "parts": [os.path.basename(p) for p in part_paths],
     }
     save_catalog_meta(meta)
     logger.info("Done.")
+
 
 if __name__ == "__main__":
     main()
