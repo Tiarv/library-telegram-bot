@@ -24,6 +24,7 @@ logging.basicConfig(
     level=logging.INFO,
 )
 logger = logging.getLogger(__name__)
+logging.getLogger("httpx").setLevel(logging.WARNING)
 
 # Populated from bot.conf
 ALLOWED_USER_IDS: set[int] = set()
