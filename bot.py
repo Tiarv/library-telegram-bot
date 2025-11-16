@@ -44,7 +44,9 @@ MAX_MATCH_DISPLAY = 9999
 TELEGRAM_MAX_MESSAGE_LEN = 3900
 MAX_CAPTION_LEN = 3001
 CHECK_CONFIRM_THRESHOLD = 20  # how many matches to list without asking
-
+# Delay between sending consecutive search-result messages (seconds).
+# Set to 0 to disable throttling.
+SEARCH_RESULTS_MESSAGE_DELAY_SECONDS = 2.0
 
 SEPARATORS = ("\x04", "\t", ";", "|")
 
@@ -941,10 +943,12 @@ async def check_inpx(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         chunks = split_text_for_telegram(full_text, TELEGRAM_MAX_MESSAGE_LEN)
 
         for i, chunk in enumerate(chunks):
-            if i == 0:
-                await message.reply_text(chunk)
-            else:
-                await message.reply_text("…continued…\n\n" + chunk)
+            # Add a delay before *subsequent* messages if configured
+            if i > 0 and SEARCH_RESULTS_MESSAGE_DELAY_SECONDS > 0:
+                await asyncio.sleep(SEARCH_RESULTS_MESSAGE_DELAY_SECONDS)
+
+        text = chunk if i == 0 else "…continued…\n\n" + chunk
+        await message.reply_text(text)
 
         return
 
