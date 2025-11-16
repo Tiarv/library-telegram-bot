@@ -2,12 +2,16 @@
 import os
 import logging
 import configparser
-from pathlib import Path
 import zipfile
 import asyncio
 import tempfile
 import subprocess
+import csv
+import json
+import time
 
+from pathlib import Path
+from typing import Dict, Any
 
 from telegram import Update
 from telegram.ext import (
@@ -34,6 +38,12 @@ BOT_TOKEN: str | None = None
 MATCH_CACHE: dict[tuple[int, int], list[dict]] = {}
 INPX_SCHEMA_CACHE: dict[str, dict[str, int]] = {}
 INPX_FIELD_NAMES_CACHE: dict[str, list[str]] = {}
+
+# Directory and file names for catalog export cache
+CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cache")
+CATALOG_ZIP_PATH = os.path.join(CACHE_DIR, "catalog.csv.zip")
+CATALOG_META_PATH = os.path.join(CACHE_DIR, "catalog_meta.json")
+CATALOG_VERSION = 1  # bump if you ever change CSV schema
 
 MAX_MATCH_COLLECT = 9999
 MAX_MATCH_DISPLAY = 9999
@@ -215,6 +225,109 @@ def load_config() -> None:
         len(ALLOWED_USER_IDS),
         len(INPX_FILES),
     )
+
+
+def load_catalog_meta() -> dict[str, Any] | None:
+    """
+    Load catalog metadata from JSON, or return None if missing/invalid.
+    """
+    if not os.path.isfile(CATALOG_META_PATH):
+        return None
+    try:
+        with open(CATALOG_META_PATH, "r", encoding="utf-8") as f:
+            meta = json.load(f)
+        if not isinstance(meta, dict):
+            return None
+        return meta
+    except Exception as e:
+        logger.warning("Failed to load catalog metadata: %s", e)
+        return None
+
+
+def save_catalog_meta(meta: dict[str, Any]) -> None:
+    """
+    Save metadata to JSON file.
+    """
+    os.makedirs(CACHE_DIR, exist_ok=True)
+    tmp_path = CATALOG_META_PATH + ".tmp"
+    try:
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            json.dump(meta, f, ensure_ascii=False, indent=2)
+        os.replace(tmp_path, CATALOG_META_PATH)
+    except Exception as e:
+        logger.error("Failed to save catalog metadata: %s", e)
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+
+
+def catalog_cache_is_valid(current_sigs: list[dict[str, Any]]) -> bool:
+    """
+    Check if existing catalog cache is valid for current INPX signatures.
+    """
+    if not os.path.isfile(CATALOG_ZIP_PATH):
+        return False
+
+    meta = load_catalog_meta()
+    if not meta:
+        return False
+
+    if meta.get("version") != CATALOG_VERSION:
+        return False
+
+    prev_sigs = meta.get("inpx_files")
+    if not isinstance(prev_sigs, list):
+        return False
+
+    # Build maps path->(size,mtime) for comparison
+    prev_map = {entry["path"]: (entry["size"], entry["mtime"]) for entry in prev_sigs if "path" in entry}
+    curr_map = {entry["path"]: (entry["size"], entry["mtime"]) for entry in current_sigs if "path" in entry}
+
+    if prev_map.keys() != curr_map.keys():
+        return False
+
+    for path, sig in curr_map.items():
+        if prev_map.get(path) != sig:
+            return False
+
+    return True
+
+
+def get_inpx_signatures() -> list[dict[str, Any]]:
+    """
+    Compute a list of signatures for all configured INPX files:
+    [
+      {"path": "...", "size": int, "mtime": float},
+      ...
+    ]
+
+    Files that do not exist are skipped.
+    """
+    sigs: list[dict[str, Any]] = []
+
+    for path in INPX_FILES:
+        path = path.strip()
+        if not path:
+            continue
+        if not os.path.isfile(path):
+            logger.warning("INPX file not found when building signatures: %s", path)
+            continue
+        try:
+            st = os.stat(path)
+        except OSError as e:
+            logger.warning("Failed to stat INPX file %s: %s", path, e)
+            continue
+
+        sigs.append(
+            {
+                "path": path,
+                "size": st.st_size,
+                "mtime": st.st_mtime,
+            }
+        )
+
+    return sigs
 
 
 def load_inpx_schema(inpx_path: str) -> dict[str, int]:
@@ -763,6 +876,180 @@ def extract_book_for_match(match: dict):
         return None, None
 
 
+def discover_max_fields() -> int:
+    """
+    Scan all INPX files and determine the maximum number of fields in any record.
+    Uses split_record only, does NOT rely on schema being correct.
+    """
+    max_fields = 0
+
+    for inpx_path in INPX_FILES:
+        inpx_path = inpx_path.strip()
+        if not inpx_path:
+            continue
+        if not os.path.isfile(inpx_path):
+            continue
+
+        try:
+            with zipfile.ZipFile(inpx_path, "r") as zf:
+                for inner_name in zf.namelist():
+                    try:
+                        with zf.open(inner_name, "r") as f:
+                            for raw_line in f:
+                                try:
+                                    line = raw_line.decode("utf-8", errors="ignore")
+                                except Exception:
+                                    continue
+                                if not line.strip():
+                                    continue
+                                _, parts = split_record(line)
+                                if parts is None:
+                                    continue
+                                if len(parts) > max_fields:
+                                    max_fields = len(parts)
+                    except Exception:
+                        # skip problematic inner file, don't kill discovery
+                        continue
+        except Exception as e:
+            logger.warning("Failed to open INPX file %s during field discovery: %s", inpx_path, e)
+            continue
+
+    return max_fields
+
+
+def generate_catalog_zip() -> str | None:
+    """
+    Generate a unified CSV catalog from all INPX files and zip it.
+
+    Returns the path to the zip file on success, or None on failure.
+    """
+    os.makedirs(CACHE_DIR, exist_ok=True)
+
+    # Discover max number of fields across all records
+    logger.info("Discovering maximum number of INPX fields...")
+    max_fields = discover_max_fields()
+    if max_fields <= 0:
+        logger.warning("No INPX records found during discovery; catalog will be empty.")
+        max_fields = 0
+
+    # CSV header: Field1..FieldN + some meta columns
+    field_columns = [f"Field{i}" for i in range(1, max_fields + 1)]
+    meta_columns = [
+        "source_inpx",
+        "index_inner_name",
+        "container_relpath",
+        "inner_book_name",
+        "ext",
+    ]
+    header = field_columns + meta_columns
+
+    # Write CSV to a temp file
+    fd, tmp_csv_path = tempfile.mkstemp(suffix=".csv")
+    os.close(fd)
+
+    total_records = 0
+
+    try:
+        with open(tmp_csv_path, "w", encoding="utf-8", newline="") as csv_file:
+            writer = csv.writer(csv_file)
+            writer.writerow(header)
+
+            for inpx_path in INPX_FILES:
+                inpx_path = inpx_path.strip()
+                if not inpx_path:
+                    continue
+                if not os.path.isfile(inpx_path):
+                    logger.warning("INPX file not found during catalog generation: %s", inpx_path)
+                    continue
+
+                try:
+                    with zipfile.ZipFile(inpx_path, "r") as zf:
+                        for inner_name in zf.namelist():
+                            try:
+                                with zf.open(inner_name, "r") as f:
+                                    for raw_line in f:
+                                        try:
+                                            line = raw_line.decode("utf-8", errors="ignore")
+                                        except Exception:
+                                            continue
+                                        if not line.strip():
+                                            continue
+
+                                        # Split into fields without assuming schema
+                                        _, parts = split_record(line)
+                                        if parts is None:
+                                            continue
+
+                                        # Parse for meta fields using your existing parser
+                                        parsed = parse_inpx_record(line)
+                                        if not parsed:
+                                            # Even if parse fails due to schema mismatch,
+                                            # we still keep the raw fields.
+                                            container_relpath = ""
+                                            inner_book_name = ""
+                                            ext = ""
+                                        else:
+                                            container_relpath = parsed.get("container_relpath") or ""
+                                            inner_book_name = parsed.get("inner_book_name") or ""
+                                            ext = parsed.get("ext") or ""
+
+                                        # Normalize row length to max_fields
+                                        row_fields = [p.strip() for p in parts]
+                                        if len(row_fields) < max_fields:
+                                            row_fields.extend([""] * (max_fields - len(row_fields)))
+                                        elif len(row_fields) > max_fields:
+                                            row_fields = row_fields[:max_fields]
+
+                                        meta = [
+                                            inpx_path,
+                                            inner_name,
+                                            container_relpath,
+                                            inner_book_name,
+                                            ext,
+                                        ]
+
+                                        writer.writerow(row_fields + meta)
+                                        total_records += 1
+                            except Exception as e:
+                                logger.warning(
+                                    "Failed to read inner file %s in %s during catalog generation: %s",
+                                    inner_name,
+                                    inpx_path,
+                                    e,
+                                )
+                                continue
+                except Exception as e:
+                    logger.warning("Failed to open INPX file %s during catalog generation: %s", inpx_path, e)
+                    continue
+
+        logger.info("Catalog CSV generation finished; total records: %d", total_records)
+
+        # Zip the CSV into the cache path
+        tmp_zip_path = CATALOG_ZIP_PATH + ".tmp"
+        try:
+            with zipfile.ZipFile(tmp_zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+                # We'll store it as catalog.csv inside the zip
+                zf.write(tmp_csv_path, arcname="catalog.csv")
+            os.replace(tmp_zip_path, CATALOG_ZIP_PATH)
+        except Exception as e:
+            logger.error("Failed to create catalog zip: %s", e)
+            try:
+                os.remove(tmp_zip_path)
+            except OSError:
+                pass
+            return None
+
+    finally:
+        # Remove temp CSV
+        try:
+            os.remove(tmp_csv_path)
+        except OSError:
+            pass
+
+    logger.info("Catalog zip created at %s", CATALOG_ZIP_PATH)
+    return CATALOG_ZIP_PATH
+
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     message = update.effective_message
     if message is None:
@@ -790,6 +1077,8 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "    /p 3 epub    – convert to EPUB\n"
         "    /p 3 pdf     – convert to PDF\n"
         "/info <n> – show all INPX fields and file size for the n-th result.\n"
+        "/export, /catalog, /dump [confirm] – export full catalog of all INPX records "
+        "as a zipped CSV. Use /export confirm to generate when cache is missing or outdated.\n"
         "Send any text and I'll echo it back."
     )
 
@@ -1149,6 +1438,99 @@ async def info_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await message.reply_text(text)
 
 
+async def export_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    /export [confirm]
+    /catalog [confirm]
+    /dump [confirm]
+
+    Without arguments:
+      - If cached catalog exists and is valid: send it.
+      - Otherwise: inform the user that generation is heavy and ask for /export confirm.
+
+    With 'confirm' as the first argument:
+      - Generate catalog if needed.
+      - Send the resulting zip file.
+    """
+    message = update.effective_message
+    if message is None:
+        return
+
+    want_confirm = False
+    if context.args and context.args[0].lower() == "confirm":
+        want_confirm = True
+
+    # Compute current INPX signatures
+    current_sigs = get_inpx_signatures()
+
+    if not current_sigs:
+        await message.reply_text(
+            "I don't see any INPX files configured or accessible. "
+            "Cannot generate catalog."
+        )
+        return
+
+    cache_valid = catalog_cache_is_valid(current_sigs)
+
+    # No 'confirm' arg
+    if not want_confirm:
+        if cache_valid and os.path.isfile(CATALOG_ZIP_PATH):
+            # Cache is valid; just send it
+            try:
+                with open(CATALOG_ZIP_PATH, "rb") as f:
+                    await message.reply_document(
+                        document=f,
+                        filename=os.path.basename(CATALOG_ZIP_PATH),
+                        caption="Catalog export (cached).",
+                    )
+            except Exception as e:
+                logger.error("Failed to send cached catalog zip: %s", e)
+                await message.reply_text("Failed to send cached catalog file.")
+            return
+
+        # Cache is missing or invalid; ask for confirmation
+        await message.reply_text(
+            "Catalog export is not ready or outdated.\n\n"
+            "Generating it may be a heavy operation (full scan of all INPX files) "
+            "and may take a while.\n\n"
+            "If you want to proceed, run:\n"
+            "/export confirm"
+        )
+        return
+
+    # Here: user sent 'confirm' -> ensure we have up-to-date zip, then send
+    await message.reply_text("Generating catalog export. This may take some time...")
+
+    # Run heavy CSV+ZIP generation in a background thread
+    zip_path = await asyncio.to_thread(generate_catalog_zip)
+
+    if not zip_path or not os.path.isfile(zip_path):
+        await message.reply_text("Failed to generate catalog export.")
+        return
+
+    # Save metadata with current signatures
+    meta = {
+        "version": CATALOG_VERSION,
+        "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "inpx_files": current_sigs,
+    }
+    save_catalog_meta(meta)
+
+    # Send zip file
+    try:
+        with open(zip_path, "rb") as f:
+            await message.reply_document(
+                document=f,
+                filename=os.path.basename(zip_path),
+                caption="Catalog export (freshly generated).",
+            )
+    except Exception as e:
+        logger.error("Failed to send generated catalog zip: %s", e)
+        await message.reply_text(
+            "Catalog was generated, but I failed to send the zip file."
+        )
+
+
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     logger.error("Exception while handling an update:", exc_info=context.error)
 
@@ -1182,6 +1564,13 @@ def main() -> None:
     )
     application.add_handler(
         CommandHandler("info", info_cmd, filters=allowed_users_filter)
+    )
+    application.add_handler(
+        CommandHandler(
+            ["export", "catalog", "dump"],
+            export_cmd,
+            filters=allowed_users_filter,  # or allowed_filter, whatever you use
+        )
     )
     application.add_handler(
         MessageHandler(
