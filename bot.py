@@ -1409,9 +1409,6 @@ def main() -> None:
 
     application.add_error_handler(error_handler)
 
-
-    application.add_error_handler(error_handler)
-
     application.run_polling(drop_pending_updates=True)
 
 
