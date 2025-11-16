@@ -534,10 +534,15 @@ def search_in_inpx_records(pattern: str, max_collect: int = 100):
     """
     Plain case-insensitive substring search in raw INPX lines.
 
-    If pattern has multiple words separated by spaces, ALL of them must
-    be present (logical AND), e.g.:
+    - Multiple words separated by spaces form an AND filter:
+        all of them must be present.
+    - Words prefixed with '-' form a NOT filter:
+        none of them may be present.
 
-      "lem epub" -> line must contain "lem" AND "epub".
+    Examples:
+      "lem epub"       -> line must contain "lem" AND "epub"
+      "lem epub -fb2"  -> line must contain "lem" AND "epub"
+                          and must NOT contain "fb2".
     """
     matches: list[dict] = []
     truncated = False
@@ -547,10 +552,21 @@ def search_in_inpx_records(pattern: str, max_collect: int = 100):
         return matches, truncated
 
     # Split query into tokens, ignore empty bits
-    needles = [t for t in pattern.casefold().split() if t]
+    tokens = [t for t in pattern.casefold().split() if t]
 
-    if not needles:
+    if not tokens:
         return matches, truncated
+
+    positive_needles: list[str] = []
+    negative_needles: list[str] = []
+
+    for tok in tokens:
+        # tokens starting with '-' are treated as NOT filters
+        if tok.startswith("-") and len(tok) > 1:
+            negative_needles.append(tok[1:])
+        else:
+            positive_needles.append(tok)
+
 
     for inpx_path in INPX_FILES:
         inpx_path = inpx_path.strip()
@@ -578,8 +594,12 @@ def search_in_inpx_records(pattern: str, max_collect: int = 100):
 
                                 line_cf = line.casefold()
 
-                                # AND filter: all needles must be present
-                                if not all(n in line_cf for n in needles):
+                                # AND filter: all positive needles must be present
+                                if positive_needles and not all(n in line_cf for n in positive_needles):
+                                    continue
+
+                                # NOT filter: none of the negative needles may be present
+                                if negative_needles and any(n in line_cf for n in negative_needles):
                                     continue
 
                                 parsed = parse_inpx_record(line)
@@ -791,8 +811,8 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "/start – say hi\n"
         "/help or /h – this help\n"
         "/lookup, /search, /find (or /l, /s, /f) <pattern> – "
-        "search inside INPX (multiple words = AND filter).\n"
-        "If there are many matches, re-run with +all to force showing the fill list.\n"
+        "search inside INPX (multiple words = AND filter, -word = NOT filter).\n"
+        "If there are many matches, re-run with +all to force showing the full list.\n"
         "/pick, /get (or /p, /g) <n> [format] – send n-th result from the last search.\n"
         "  Examples:\n"
         "    /p 3         – send original file\n"
