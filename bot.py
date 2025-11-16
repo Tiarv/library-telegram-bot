@@ -40,6 +40,36 @@ MAX_CAPTION_LEN = 3001
 
 SEPARATORS = ("\x04", "\t", ";", "|")
 
+def format_mb(bytes_size: int) -> str:
+    """
+    Format bytes as a human-readable string in megabytes with 2 decimals.
+    """
+    mb = bytes_size / (1024 * 1024)
+    return f"{mb:.2f} MB"
+
+
+def get_book_size_for_match(match: dict) -> int | None:
+    """
+    Use extract_book_for_match to get a temp file and return its size in bytes.
+    The temp file is deleted afterwards.
+    """
+    tmp_book_path, _ = extract_book_for_match(match)
+    if not tmp_book_path:
+        return None
+
+    try:
+        size_bytes = os.path.getsize(tmp_book_path)
+    except OSError:
+        size_bytes = None
+    finally:
+        try:
+            os.remove(tmp_book_path)
+        except OSError:
+            pass
+
+    return size_bytes
+
+
 def build_safe_caption(prefix: str, match: dict) -> str:
     """
     Build a Telegram-safe caption from match fields:
@@ -367,11 +397,12 @@ def parse_inpx_record(line: str) -> dict | None:
     return {
         "author": author,
         "title": title,
+        "lib_id": lib_id,
         "container_relpath": container_relpath,
         "inner_book_name": inner_book_name,
         "ext": ext,
+        "fields": parts,  # <- new: full raw fields from INPX record
     }
-
 
 def resolve_container_path(inpx_path: str, relpath: str) -> str | None:
     """
@@ -673,6 +704,7 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "    /p 3         – send original file\n"
         "    /p 3 epub    – convert to EPUB\n"
         "    /p 3 pdf     – convert to PDF\n"
+        "/info <n> – show all INPX fields and file size for the n-th result.\n"
         "Send any text and I'll echo it back."
     )
 
@@ -947,6 +979,82 @@ async def pickfmt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             pass
 
 
+async def info_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    /info <n> – show all INPX fields for the n-th result from the last search
+    and the actual book file size in MB.
+    """
+    message = update.effective_message
+    if message is None:
+        return
+
+    if not context.args:
+        await message.reply_text("Usage: /info <number>")
+        return
+
+    try:
+        index = int(context.args[0])
+    except ValueError:
+        await message.reply_text("First argument must be a number, e.g. /info 1")
+        return
+
+    key = _cache_key_from_update(update)
+    if key is None or key not in MATCH_CACHE:
+        await message.reply_text(
+            "I don’t have any recent search results for you. "
+            "Run /lookup <pattern> first."
+        )
+        return
+
+    matches = MATCH_CACHE[key]
+    if not 1 <= index <= len(matches):
+        await message.reply_text(
+            f"Choice out of range. You have {len(matches)} stored result(s)."
+        )
+        return
+
+    match = matches[index - 1]
+
+    # Get fields from INPX
+    fields = match.get("fields")
+    if not fields:
+        # Shouldn't happen after we changed parse_inpx_record, but be defensive
+        await message.reply_text(
+            "Detailed INPX fields were not stored for this result."
+        )
+        return
+
+    # Compute size in background (extraction is I/O heavy)
+    size_bytes = await asyncio.to_thread(get_book_size_for_match, match)
+    size_str = (
+        format_mb(size_bytes) if isinstance(size_bytes, int) else "unknown (could not extract)"
+    )
+
+    # Build human-readable info text
+    lines = []
+    lines.append("INPX record details:")
+    lines.append("")
+    for i, value in enumerate(fields, start=1):
+        value = value.strip()
+        if not value:
+            value = "«empty»"
+        lines.append(f"Field {i}: {value}")
+    lines.append("")
+    lines.append(f"Container INPX: {os.path.basename(match.get('inpx_path') or '<?>')}")
+    lines.append(f"Index file inside INPX: {match.get('index_inner_name') or '<?>'}")
+    lines.append(f"Container path (relative): {match.get('container_relpath') or '<?>'}")
+    lines.append(f"Inner book name: {match.get('inner_book_name') or '<?>'}")
+    lines.append(f"Detected extension: {match.get('ext') or '<?>'}")
+    lines.append("")
+    lines.append(f"Actual book size: {size_str}")
+
+    text = "\n".join(lines)
+
+    # If you're worried about length, you can reuse your split_text_for_telegram,
+    # but INPX records tend to be short enough that one message is fine.
+    await message.reply_text(text)
+
+
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     logger.error("Exception while handling an update:", exc_info=context.error)
 
@@ -977,6 +1085,9 @@ def main() -> None:
             pickfmt,
             filters=allowed_users_filter,
         )
+    )
+    application.add_handler(
+        CommandHandler("info", info_cmd, filters=allowed_users_filter)
     )
     application.add_handler(
         MessageHandler(
