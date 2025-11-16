@@ -3,12 +3,12 @@ Description=Generate INPX catalog CSV parts
 
 [Service]
 Type=oneshot
-User=librarian
-Group=librarian
-WorkingDirectory=/home/librarian
+User=library
+Group=library
+WorkingDirectory=/home/library
 
 # Run the generator with the venv Python
-ExecStart=/home/librarian/venv/bin/python /home/librarian/generate_catalog.py
+ExecStart=/home/library/venv/bin/python /home/library/generate_catalog.py
 
 # Optional, but nice for logs
 StandardOutput=journal
