@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily INPX catalog generation (timer)
+
+[Timer]
+OnCalendar=*-*-* 03:15:00
+Persistent=true
+Unit=generate-catalog.service
+
+[Install]
+WantedBy=timers.target
