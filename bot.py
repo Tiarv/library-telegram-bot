@@ -908,7 +908,6 @@ async def check_inpx(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         )
         header_lines.append("")
         header_lines.append("Example:")
-        header_lines.append(f"/lookup {original_pattern_for_echo} --all")
         header_lines.append(f"/lookup {original_pattern_for_echo} +all")
 
         await message.reply_text("\n".join(header_lines))
@@ -943,14 +942,18 @@ async def check_inpx(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         chunks = split_text_for_telegram(full_text, TELEGRAM_MAX_MESSAGE_LEN)
 
         for i, chunk in enumerate(chunks):
-            # Add a delay before *subsequent* messages if configured
-            if i > 0 and SEARCH_RESULTS_MESSAGE_DELAY_SECONDS > 0:
+            # build text for this message
+            text = chunk if i == 0 else "…continued…\n\n" + chunk
+
+            # send current chunk
+            await message.reply_text(text)
+
+            # delay *after* sending, before the next one
+            if i < len(chunks) - 1 and SEARCH_RESULTS_MESSAGE_DELAY_SECONDS > 0:
                 await asyncio.sleep(SEARCH_RESULTS_MESSAGE_DELAY_SECONDS)
 
-        text = chunk if i == 0 else "…continued…\n\n" + chunk
-        await message.reply_text(text)
-
         return
+
 
     # Exactly one match: extract and send
     match = matches[0]
