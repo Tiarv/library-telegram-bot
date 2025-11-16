@@ -35,5 +35,11 @@ $ cd library-telegram-bot.git
 $ vim bot.conf
 $ chmod 0400 bot.*
 $ python3 ./generate_catalog.py
-$ python3 ./bot.py
+$ ^D
+# cp /home/library/library-telegram-bot.git/etc/systemd/system/* /etc/systemd/system/
+# systemctl daemon-reload
+# systemctl enable generate-catalog.timer
+# systemctl enable library.service
+# systemctl start library.service
+# systemctl status library.service
 ```
