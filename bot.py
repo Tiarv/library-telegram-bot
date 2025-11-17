@@ -927,6 +927,45 @@ async def send_matches_list(
         await message.reply_text(text_to_send)
 
 
+def dedupe_and_sort_matches(matches: list[dict]) -> list[dict]:
+    """
+    Collapse only *truly identical* records:
+    - same INPX file
+    - same index file inside INPX
+    - same full list of fields
+
+    Records that differ in any of those stay separate.
+
+    Then sort results to make similar items cluster together.
+    """
+    by_key: dict[tuple, dict] = {}
+
+    for rec in matches:
+        fields = tuple(rec.get("fields") or [])
+        key = (
+            rec.get("inpx_path"),
+            rec.get("index_inner_name"),
+            fields,
+        )
+        if key in by_key:
+            # exact duplicate of a record we've already seen in the same INPX/index
+            continue
+        by_key[key] = rec
+
+    deduped = list(by_key.values())
+
+    # Sort for nicer UX: author → title → ext → container path → INPX name → lib_id
+    def sort_key(r: dict) -> tuple:
+        author = (r.get("author") or "").casefold()
+        title = (r.get("title") or "").casefold()
+        ext = (r.get("ext") or "").casefold()
+        rel = (r.get("container_relpath") or "").casefold()
+        inpx_name = os.path.basename(r.get("inpx_path") or "").casefold()
+        lib_id = (r.get("lib_id") or "").casefold()
+        return (author, title, ext, rel, inpx_name, lib_id)
+
+    deduped.sort(key=sort_key)
+    return deduped
 
 
 async def check_inpx(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -972,14 +1011,16 @@ async def check_inpx(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         pattern,
         MAX_MATCH_COLLECT,
     )
-    
+
     if not matches:
         await message.reply_text("not found")
         return
 
+    # Collapse truly identical records and sort for nicer display
+    matches = dedupe_and_sort_matches(matches)
     total_matches = len(matches)
 
-    # Cache results per chat+user
+    # Cache results per chat+user (for /get and "Show all results" callback)
     key = _cache_key_from_update(update)
     if key is not None:
         MATCH_CACHE[key] = matches
