@@ -871,6 +871,7 @@ async def send_matches_list(
         await message.reply_text("not found")
         return
 
+    # Build list lines
     lines: list[str] = []
     for idx, rec in enumerate(matches[:MAX_MATCH_DISPLAY], start=1):
         author = rec.get("author") or "<?>"
@@ -889,15 +890,42 @@ async def send_matches_list(
         "Please refine your query or choose one with /get <number>.\n\n"
     )
 
-    full_text = header + "\n".join(lines)
+    # Now manually split into chunks that fit into TELEGRAM_MAX_MESSAGE_LEN.
+    # First message includes the header, following ones only the lines.
+    first_chunk = True
+    current = header
+    first_message_sent = False
 
-    chunks = split_text_for_telegram(full_text, TELEGRAM_MAX_MESSAGE_LEN)
+    def flush_current(cur: str, first: bool) -> str:
+        """Send current text as a message and return a fresh buffer."""
+        nonlocal first_message_sent
+        if not cur.strip():
+            return ""
+        text = cur if first else "…continued…\n\n" + cur
+        first_message_sent = True
+        return text
 
-    for i, chunk in enumerate(chunks):
-        text = chunk if i == 0 else "…continued…\n\n" + chunk
-        await message.reply_text(text)
-        if i < len(chunks) - 1 and SEARCH_RESULTS_MESSAGE_DELAY_SECONDS > 0:
-            await asyncio.sleep(SEARCH_RESULTS_MESSAGE_DELAY_SECONDS)
+    for line in lines:
+        # Always add newline after each line
+        candidate = current + line + "\n"
+
+        if len(candidate) > TELEGRAM_MAX_MESSAGE_LEN and current.strip():
+            # flush current chunk
+            text_to_send = current if first_chunk else "…continued…\n\n" + current
+            await message.reply_text(text_to_send)
+            if SEARCH_RESULTS_MESSAGE_DELAY_SECONDS > 0:
+                await asyncio.sleep(SEARCH_RESULTS_MESSAGE_DELAY_SECONDS)
+            first_chunk = False
+            # start new chunk with this line
+            current = line + "\n"
+        else:
+            current = candidate
+
+    # Flush remaining buffer
+    if current.strip():
+        text_to_send = current if first_chunk else "…continued…\n\n" + current
+        await message.reply_text(text_to_send)
+
 
 
 
