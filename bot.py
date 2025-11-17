@@ -1352,6 +1352,72 @@ async def log_unauthorized(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
     return
 
+
+async def log_any_update(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user = update.effective_user
+    chat = update.effective_chat
+    message = update.effective_message
+
+    user_id = user.id if user else None
+    username = user.username if user else None
+    first_name = getattr(user, "first_name", None) if user else None
+    last_name = getattr(user, "last_name", None) if user else None
+
+    chat_id = chat.id if chat else None
+    chat_type = chat.type if chat else None
+
+    text = None
+    content_type = None
+
+    if message:
+        if message.text:
+            text = message.text
+            content_type = "text"
+        elif message.caption:
+            text = message.caption
+            # some kind of media with caption
+            if message.document:
+                content_type = "document"
+            elif message.photo:
+                content_type = "photo"
+            elif message.audio:
+                content_type = "audio"
+            elif message.video:
+                content_type = "video"
+            else:
+                content_type = "media"
+        else:
+            # non-text, non-caption content
+            if message.document:
+                content_type = "document"
+            elif message.photo:
+                content_type = "photo"
+            elif message.audio:
+                content_type = "audio"
+            elif message.video:
+                content_type = "video"
+            elif message.sticker:
+                content_type = "sticker"
+            else:
+                content_type = "other"
+
+    logger.info(
+        "Incoming update: user_id=%s username=%r first_name=%r last_name=%r "
+        "chat_id=%s chat_type=%s content_type=%r text=%r",
+        user_id,
+        username,
+        first_name,
+        last_name,
+        chat_id,
+        chat_type,
+        content_type,
+        text,
+    )
+
+    # IMPORTANT: do not reply from here; this is logging-only
+    return
+
+
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     logger.error("Exception while handling an update:", exc_info=context.error)
 
@@ -1400,13 +1466,17 @@ def main() -> None:
         )
     )
     # Log any updates from users who are NOT in ALLOWED_USER_IDS
+    ##application.add_handler(
+    ##    MessageHandler(
+    ##        ~allowed_users_filter & filters.ALL,
+    ##        log_unauthorized,
+    ##    )
+    ##)
+    # Log every update (allowed and unauthorized users)
     application.add_handler(
-        MessageHandler(
-            ~allowed_users_filter & filters.ALL,
-            log_unauthorized,
-        )
+        MessageHandler(filters.ALL, log_any_update),
     )
-
+    
     application.add_error_handler(error_handler)
 
     application.run_polling(drop_pending_updates=True)
