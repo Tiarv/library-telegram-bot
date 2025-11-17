@@ -934,35 +934,11 @@ async def check_inpx(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
     # If many results and no explicit +all, ask for confirmation
     if total_matches > CHECK_CONFIRM_THRESHOLD and not show_all:
-        header_lines = []
-
-        if truncated:
-            header_lines.append(
-                f"Found at least {total_matches} matching record(s). "
-                f"Search was truncated at {MAX_MATCH_COLLECT} collected matches."
-            )
-        else:
-            header_lines.append(
-                f"Found {total_matches} matching record(s)."
-            )
-
-        header_lines.append(
-            f"This exceeds the current auto-display limit of {CHECK_CONFIRM_THRESHOLD}."
-        )
-        header_lines.append("")
-        header_lines.append(
-            "To avoid flooding the chat, I won't list them automatically."
-        )
-        header_lines.append(
-            "You can either refine your query (add more words, use -word to exclude),"
-        )
-        header_lines.append(
-            "or use the button below to show all results."
-        )
-        header_lines.append("")
-        header_lines.append("Example command (if you prefer typing):")
-        header_lines.append(f"/find {original_pattern_for_echo} +all")
-
+        header_lines = [
+            f"Found {total_matches} matching record(s). "
+            "Refine your query or press the button below:"
+        ]
+        
         # Inline button: on tap, bot will send full list using cached matches
         keyboard = InlineKeyboardMarkup(
             [
