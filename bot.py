@@ -878,9 +878,8 @@ async def check_inpx(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     - Case-insensitive substring search on raw INPX lines
     - Multiple words act as an AND filter (all must be present)
     - If 0 matches: reply 'not found'
-    - If >1 matches: list author/title/id/ext + INPX file, do NOT send any book
-      and store matches in cache for /pick
-    - If exactly 1 match: extract and send that book
+    - If ≥1 matches: list author/title/ext, do NOT send any book
+      and store matches in cache for /get
     """
     message = update.effective_message
     if message is None:
@@ -920,11 +919,6 @@ async def check_inpx(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         await message.reply_text("not found")
         return
 
-    # Cache results per chat+user for /pick
-    key = _cache_key_from_update(update)
-    if key is not None:
-        MATCH_CACHE[key] = matches
-
     total_matches = len(matches)
 
     # Cache results per chat+user
@@ -938,8 +932,7 @@ async def check_inpx(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
             f"Found {total_matches} matching record(s). "
             "Refine your query or press the button below:"
         ]
-        
-        # Inline button: on tap, bot will send full list using cached matches
+
         keyboard = InlineKeyboardMarkup(
             [
                 [
@@ -957,23 +950,14 @@ async def check_inpx(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         )
         return
 
-    # Multiple matches: show list, no file yet
-    if total_matches > 1:
-        await send_matches_list(
-            message=message,
-            matches=matches,
-            truncated=truncated,
-            header_prefix="Multiple matches",
-        )
-        return
-
-    # Exactly one match: extract and send
-    match = matches[0]
-
-    tmp_book_path, send_name = await asyncio.to_thread(
-        extract_book_for_match,
-        match,
+    # One or more matches: show list, no file yet
+    await send_matches_list(
+        message=message,
+        matches=matches,
+        truncated=truncated,
+        header_prefix="Matches",
     )
+    return
 
     if not tmp_book_path:
         await message.reply_text(
