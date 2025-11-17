@@ -15,7 +15,6 @@ from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
     MessageHandler,
-    TypeHandler,
     ContextTypes,
     filters,
 )
@@ -1475,7 +1474,7 @@ def main() -> None:
     ##)
     # Log every update (allowed and unauthorized users)
     application.add_handler(
-        TypeHandler(filters.ALL, log_any_update),
+        MessageHandler(filters.ALL, log_any_update),
         group=-1,
     )
     
