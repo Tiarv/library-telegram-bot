@@ -15,6 +15,7 @@ from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
     MessageHandler,
+    CallbackQueryHandler,
     ContextTypes,
     filters,
 )
@@ -829,6 +830,47 @@ def _cache_key_from_update(update: Update) -> tuple[int, int] | None:
     return (chat.id, user.id)
 
 
+async def send_matches_list(
+    message,
+    matches: list[dict],
+    truncated: bool,
+    header_prefix: str = "Multiple matches",
+) -> None:
+    total_matches = len(matches)
+    if total_matches == 0:
+        await message.reply_text("not found")
+        return
+
+    lines: list[str] = []
+    for idx, rec in enumerate(matches[:MAX_MATCH_DISPLAY], start=1):
+        author = rec.get("author") or "<?>"
+        title = rec.get("title") or "<?>"
+        ext = rec.get("ext") or "<?>"
+        lines.append(f"{idx}) {author} — {title} {ext}")
+
+    shown = min(total_matches, MAX_MATCH_DISPLAY)
+
+    header = f"{header_prefix} ({total_matches}"
+    if truncated:
+        header += f"+, search truncated at {MAX_MATCH_COLLECT}"
+    header += ").\n"
+    header += (
+        f"Showing first {shown} result(s). "
+        "Please refine your query or choose one with /get <number>.\n\n"
+    )
+
+    full_text = header + "\n".join(lines)
+
+    chunks = split_text_for_telegram(full_text, TELEGRAM_MAX_MESSAGE_LEN)
+
+    for i, chunk in enumerate(chunks):
+        text = chunk if i == 0 else "…continued…\n\n" + chunk
+        await message.reply_text(text)
+        if i < len(chunks) - 1 and SEARCH_RESULTS_MESSAGE_DELAY_SECONDS > 0:
+            await asyncio.sleep(SEARCH_RESULTS_MESSAGE_DELAY_SECONDS)
+
+
+
 async def check_inpx(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
     Search for a pattern inside the contents of all configured .inpx archives.
@@ -885,8 +927,12 @@ async def check_inpx(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
     total_matches = len(matches)
 
-    # If there are many results and user did NOT explicitly ask for all,
-    # don't spam the chat – ask them to re-run with --all
+    # Cache results per chat+user
+    key = _cache_key_from_update(update)
+    if key is not None:
+        MATCH_CACHE[key] = matches
+
+    # If many results and no explicit +all, ask for confirmation
     if total_matches > CHECK_CONFIRM_THRESHOLD and not show_all:
         header_lines = []
 
@@ -908,60 +954,42 @@ async def check_inpx(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
             "To avoid flooding the chat, I won't list them automatically."
         )
         header_lines.append(
-            "Please either refine your query (add more words for AND filtering),"
+            "You can either refine your query (add more words, use -word to exclude),"
         )
         header_lines.append(
-            "or re-run the command with `+all` at the end if you really want "
-            "to see the full list."
+            "or use the button below to show all results."
         )
         header_lines.append("")
-        header_lines.append("Example:")
-        header_lines.append(f"/lookup {original_pattern_for_echo} +all")
+        header_lines.append("Example command (if you prefer typing):")
+        header_lines.append(f"/find {original_pattern_for_echo} +all")
 
-        await message.reply_text("\n".join(header_lines))
+        # Inline button: on tap, bot will send full list using cached matches
+        keyboard = InlineKeyboardMarkup(
+            [
+                [
+                    InlineKeyboardButton(
+                        text="Show all results (+all)",
+                        callback_data="show_all_results",
+                    )
+                ]
+            ]
+        )
+
+        await message.reply_text(
+            "\n".join(header_lines),
+            reply_markup=keyboard,
+        )
         return
 
     # Multiple matches: show list, no file yet
     if total_matches > 1:
-        lines: list[str] = []
-        for idx, rec in enumerate(matches[:MAX_MATCH_DISPLAY], start=1):
-            author = rec.get("author") or "<?>"
-            title = rec.get("title") or "<?>"
-            ext = rec.get("ext") or "<?>"
-            inpx_name = os.path.basename(rec.get("inpx_path") or "") or "<?>"
-            lines.append(
-                f"{idx}) {author} — {title} ({ext})"
-            )
-
-        shown = min(total_matches, MAX_MATCH_DISPLAY)
-
-        header = f"Multiple matches ({total_matches}"
-        if truncated:
-            header += f"+, search truncated at {MAX_MATCH_COLLECT}"
-        header += ").\n"
-        header += (
-            f"Showing first {shown} result(s). "
-            "Please refine your query or choose one with /pick <number>.\n\n"
+        await send_matches_list(
+            message=message,
+            matches=matches,
+            truncated=truncated,
+            header_prefix="Multiple matches",
         )
-
-        full_text = header + "\n".join(lines)
-
-        # Split into safe chunks for Telegram
-        chunks = split_text_for_telegram(full_text, TELEGRAM_MAX_MESSAGE_LEN)
-
-        for i, chunk in enumerate(chunks):
-            # build text for this message
-            text = chunk if i == 0 else "…continued…\n\n" + chunk
-
-            # send current chunk
-            await message.reply_text(text)
-
-            # delay *after* sending, before the next one
-            if i < len(chunks) - 1 and SEARCH_RESULTS_MESSAGE_DELAY_SECONDS > 0:
-                await asyncio.sleep(SEARCH_RESULTS_MESSAGE_DELAY_SECONDS)
-
         return
-
 
     # Exactly one match: extract and send
     match = matches[0]
@@ -995,6 +1023,33 @@ async def check_inpx(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
             os.remove(tmp_book_path)
         except OSError:
             pass
+
+
+async def show_all_results_callback(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    query = update.callback_query
+    await query.answer()
+
+    key = _cache_key_from_update(update)
+    if key is None:
+        await query.message.reply_text("No cached search results available.")
+        return
+
+    matches = MATCH_CACHE.get(key)
+    if not matches:
+        await query.message.reply_text("No cached search results available.")
+        return
+
+    # We don't know if the original search was truncated; assume False here.
+    # If you store `truncated` per key as well, you can pass the real value.
+    await send_matches_list(
+        message=query.message,
+        matches=matches,
+        truncated=False,
+        header_prefix="All matches",
+    )
+
 
 async def pickfmt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
@@ -1440,7 +1495,14 @@ def main() -> None:
         CommandHandler(
             ["export", "catalog", "dump"],
             export_cmd,
-            filters=allowed_users_filter,  # or whatever your filter is called
+            filters=allowed_users_filter,
+        )
+    )
+    application.add_handler(
+        CallbackQueryHandler(
+            show_all_results_callback,
+            pattern="^show_all_results$",
+            block=False,
         )
     )
     # Log every update (allowed and unauthorized users)
