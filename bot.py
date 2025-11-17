@@ -27,6 +27,17 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
+KNOWN_COMMANDS = {
+    # search / lookup aliases
+    "lookup", "look", "search", "find", "l", "s", "f",
+    # pick/get aliases
+    "pick", "get", "p", "g",
+    # info
+    "info",
+    # export / catalog / dump aliases
+    "export", "catalog", "dump",
+}
+
 # Populated from bot.conf
 ALLOWED_USER_IDS: set[int] = set()
 INPX_FILES: list[str] = []
@@ -818,7 +829,26 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def unknown_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    # Any unrecognized command from an allowed user -> show help
+    message = update.effective_message
+    if message is None or not message.text:
+        return
+
+    # First token is the command (e.g. "/find@MyBot", "/foo")
+    cmd_token = message.text.strip().split()[0]
+    if not cmd_token.startswith("/"):
+        # Not a command, ignore
+        return
+
+    # Strip leading '/' and optional @botname
+    cmd = cmd_token[1:]
+    if "@" in cmd:
+        cmd = cmd.split("@", 1)[0]
+
+    # If this is one of our known commands, do nothing
+    if cmd in KNOWN_COMMANDS:
+        return
+
+    # Otherwise, treat as an unknown command and show help
     await help_cmd(update, context)
     
 
@@ -1476,6 +1506,13 @@ def main() -> None:
             unknown_command,
         ),
         group=1,
+    )
+    application.add_handler(
+    MessageHandler(
+        filters.TEXT & ~filters.COMMAND & allowed_users_filter,
+        help_cmd,
+    ),
+    group=1,
     )
     
     application.add_error_handler(error_handler)
