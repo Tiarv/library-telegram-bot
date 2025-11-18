@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
 KNOWN_COMMANDS = {
-    "start"
+    "start",
     # search / lookup aliases
     "lookup", "look", "search", "find", "l", "s", "f",
     # pick/get aliases
