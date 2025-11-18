@@ -126,41 +126,6 @@ def build_safe_caption(prefix: str, match: dict) -> str:
     return caption
 
 
-def split_text_for_telegram(text: str, limit: int = TELEGRAM_MAX_MESSAGE_LEN) -> list[str]:
-    """
-    Split text into chunks that fit within Telegram's message size limit.
-
-    Tries to split on newline boundaries; if a single line is still too long,
-    it will hard-split that line.
-    """
-    if len(text) <= limit:
-        return [text]
-
-    chunks: list[str] = []
-    current = ""
-
-    for line in text.splitlines(keepends=True):
-        # If one line is longer than the limit, hard-split it
-        while len(line) > limit:
-            part = line[:limit]
-            line = line[limit:]
-            if current:
-                chunks.append(current.rstrip())
-                current = ""
-            chunks.append(part.rstrip())
-
-        if len(current) + len(line) > limit:
-            chunks.append(current.rstrip())
-            current = line
-        else:
-            current += line
-
-    if current.strip():
-        chunks.append(current.rstrip())
-
-    return chunks
-
-
 def split_record(line: str):
     """
     Try to detect a separator and split the line.
@@ -822,7 +787,7 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "  Examples:\n"
         "    /get 3         – send original file\n"
         "    /get 3 epub    – convert to EPUB\n"
-        "Supported formats include but not limited to: epub, fb2, pdf, txt, html, doc, mobi"
+        "  Supported formats include (non-exhaustive): epub, fb2, pdf, txt, html, doc, mobi\n"        
         "/info <n>          Show all metadata for the result #n.\n"
         "/dump              Send full catalog export (CSV in zip).\n"    )
 
@@ -1061,32 +1026,7 @@ async def check_inpx(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         header_prefix="Matches",
     )
     return
-
-    if not tmp_book_path:
-        await message.reply_text(
-            "A single match was found in the index, but the book could not be extracted."
-        )
-        return
-
-    try:
-        with open(tmp_book_path, "rb") as f:
-            await message.reply_document(
-                document=f,
-                filename=send_name or os.path.basename(tmp_book_path),
-                caption=build_safe_caption("found", match),
-            )
-
-    except Exception as e:
-        logger.error("Failed to send book file %s: %s", tmp_book_path, e)
-        await message.reply_text(
-            "Match was found and extracted, but failed to send the book file."
-        )
-    finally:
-        try:
-            os.remove(tmp_book_path)
-        except OSError:
-            pass
-
+    
 
 async def show_all_results_callback(
     update: Update, context: ContextTypes.DEFAULT_TYPE
@@ -1129,11 +1069,11 @@ async def pickfmt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     if not context.args:
         await message.reply_text(
-            "Usage: /pick <number> [format]\n"
+            "Usage: /get <number> [format]\n"
             "Examples:\n"
-            "  /pickup 1        – send original file\n"
-            "  /pickup 1 epub   – convert to EPUB\n"
-            "  /pickup 1 pdf    – convert to PDF"
+            "  /get 1        – send original file\n"
+            "  /get 1 epub   – convert to EPUB\n"
+            "  /get 1 pdf    – convert to PDF"
         )
         return
         
@@ -1142,7 +1082,7 @@ async def pickfmt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         index = int(context.args[0])
     except ValueError:
         await message.reply_text(
-            "First argument must be a number, e.g. /pick 1 epub"
+            "First argument must be a number, e.g. /get 1 epub"
         )
         return
 
@@ -1154,7 +1094,7 @@ async def pickfmt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if key is None or key not in MATCH_CACHE:
         await message.reply_text(
             "I don’t have any recent search results for you. "
-            "Run /lookup <pattern> first."
+            "Run /find <pattern> first."
         )
         return
 
@@ -1200,7 +1140,7 @@ async def pickfmt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                     document=f,
                     filename=send_name or os.path.basename(tmp_book_path),
                     caption=build_safe_caption(
-                        "found (by /pick, original file)", match
+                        "found (original file)", match
                     ),
                 )
         except Exception as e:
@@ -1421,41 +1361,6 @@ async def export_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
             await message.reply_text(
                 f"Failed to send catalog part {idx} ({name})."
             )
-
-
-async def log_unauthorized(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    user = update.effective_user
-    chat = update.effective_chat
-    message = update.effective_message
-
-    user_id = user.id if user else None
-    username = user.username if user else None
-    first_name = getattr(user, "first_name", None) if user else None
-    last_name = getattr(user, "last_name", None) if user else None
-
-    chat_id = chat.id if chat else None
-    chat_type = chat.type if chat else None
-
-    text = None
-    if message:
-        if message.text:
-            text = message.text
-        elif message.caption:
-            text = message.caption
-
-    logger.warning(
-        "Unauthorized update: user_id=%s username=%r first_name=%r last_name=%r "
-        "chat_id=%s chat_type=%s text=%r",
-        user_id,
-        username,
-        first_name,
-        last_name,
-        chat_id,
-        chat_type,
-        text,
-    )
-
-    return
 
 
 async def log_any_update(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
