@@ -54,6 +54,13 @@ INPX_FIELD_NAMES_CACHE: dict[str, list[str]] = {}
 CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cache")
 CATALOG_META_PATH = os.path.join(CACHE_DIR, "catalog_meta.json")
 
+MAX_MATCH_COLLECT = 9999
+MAX_MATCH_DISPLAY = 9999
+TELEGRAM_MAX_MESSAGE_LEN = 3900
+MAX_CAPTION_LEN = 3001
+CHECK_CONFIRM_THRESHOLD = 20
+SEARCH_RESULTS_MESSAGE_DELAY_SECONDS = 2.0
+
 SEPARATORS = ("\x04", "\t", ";", "|")
 
 
