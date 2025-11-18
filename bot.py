@@ -54,15 +54,6 @@ INPX_FIELD_NAMES_CACHE: dict[str, list[str]] = {}
 CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cache")
 CATALOG_META_PATH = os.path.join(CACHE_DIR, "catalog_meta.json")
 
-MAX_MATCH_COLLECT = 9999
-MAX_MATCH_DISPLAY = 9999
-TELEGRAM_MAX_MESSAGE_LEN = 3900
-MAX_CAPTION_LEN = 3001
-CHECK_CONFIRM_THRESHOLD = 20  # how many matches to list without asking
-# Delay between sending consecutive search-result messages (seconds).
-# Set to 0 to disable throttling.
-SEARCH_RESULTS_MESSAGE_DELAY_SECONDS = 2.0
-
 SEPARATORS = ("\x04", "\t", ";", "|")
 
 
@@ -141,6 +132,9 @@ def split_record(line: str):
 def load_config() -> None:
     """Load config from bot.conf in the same directory as this script."""
     global ALLOWED_USER_IDS, INPX_FILES, BOT_TOKEN
+    global MAX_MATCH_COLLECT, MAX_MATCH_DISPLAY
+    global TELEGRAM_MAX_MESSAGE_LEN, MAX_CAPTION_LEN
+    global CHECK_CONFIRM_THRESHOLD, SEARCH_RESULTS_MESSAGE_DELAY_SECONDS
 
     script_dir = Path(__file__).resolve().parent
     config_path = script_dir / "bot.conf"
@@ -197,6 +191,31 @@ def load_config() -> None:
                 files.append(part)
 
     INPX_FILES = files
+
+    # Optional tunable parameters (override defaults if present)
+    try:
+        MAX_MATCH_COLLECT = section.getint(
+            "max_match_collect", fallback=MAX_MATCH_COLLECT
+        )
+        MAX_MATCH_DISPLAY = section.getint(
+            "max_match_display", fallback=MAX_MATCH_DISPLAY
+        )
+        TELEGRAM_MAX_MESSAGE_LEN = section.getint(
+            "telegram_max_message_len", fallback=TELEGRAM_MAX_MESSAGE_LEN
+        )
+        MAX_CAPTION_LEN = section.getint(
+            "max_caption_len", fallback=MAX_CAPTION_LEN
+        )
+        CHECK_CONFIRM_THRESHOLD = section.getint(
+            "check_confirm_threshold", fallback=CHECK_CONFIRM_THRESHOLD
+        )
+        SEARCH_RESULTS_MESSAGE_DELAY_SECONDS = section.getfloat(
+            "search_results_message_delay_seconds",
+            fallback=SEARCH_RESULTS_MESSAGE_DELAY_SECONDS,
+        )
+    except ValueError as e:
+        # Bad value in config (non-numeric, negative, etc.)
+        raise RuntimeError(f"Invalid numeric value in [bot] section: {e}") from e
 
     logger.info(
         "Config loaded: %d allowed users, %d INPX files",
