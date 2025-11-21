@@ -1591,6 +1591,7 @@ async def post_init(application: Application) -> None:
         BotCommand("find", "Искать книгу по ключевым словам. Пробел = И, -слово = НЕ"),
         BotCommand("get", "Получить книгу по номеру в поиске"),
         BotCommand("info", "Получить информацию о книге по номеру в поиске"),
+        BotCommand("compare", "Сравнить данные двух книг по их номерам в поиске"),
         BotCommand("dump", "Получить полный каталог"),
     ]
     await application.bot.set_my_commands(commands)
