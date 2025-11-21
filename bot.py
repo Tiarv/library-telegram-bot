@@ -809,14 +809,14 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
 
     help_text = (
-        "/find <words>      Search INPX. Space = AND, -word = NOT, +all = show all.\n"        
-        "/get <n> [format]  Send result #n from last search.\n"
-        "  Examples:\n"
-        "    /get 3         – send original file\n"
-        "    /get 3 epub    – convert to EPUB\n"
-        "  Supported formats include (non-exhaustive): epub, fb2, pdf, txt, html, doc, mobi\n"        
-        "/info <n>          Show all metadata for the result #n.\n"
-        "/dump              Send full catalog export (CSV in zip).\n"    )
+        "/find <слова>      Поиск книги в каталогах по ключевым словам. Пробел = И, -слово = НЕ\n"        
+        "/get <n> [формат]  Получить книгу по номеру #n из поиска.\n"
+        "  Примеры:\n"
+        "    /get 3         – отправит книгу как есть\n"
+        "    /get 3 epub    – конвертирует книгу в EPUB\n"
+        "  Поддерживаемые форматы включают: epub, fb2, pdf, txt, html, doc, mobi и другие\n"        
+        "/info <n>          Показывает данные о книге по номеру #n из поиска.\n"
+        "/dump              Полный каталог всех книг (CSV в zip).\n"    )
 
     await message.reply_text(
         f"<pre>{html.escape(help_text)}</pre>",
@@ -882,8 +882,8 @@ async def send_matches_list(
         header += f"+, search truncated at {MAX_MATCH_COLLECT}"
     header += ").\n"
     header += (
-        f"Showing first {shown} result(s). "
-        "Please refine your query or choose one with /get <number>.\n\n"
+        f"Отображаются первые {shown} результатов. "
+        "Уточните запрос или выберите книгу при помощи /get <number>.\n\n"
     )
 
     # Now manually split into chunks that fit into TELEGRAM_MAX_MESSAGE_LEN.
@@ -897,7 +897,7 @@ async def send_matches_list(
         nonlocal first_message_sent
         if not cur.strip():
             return ""
-        text = cur if first else "…continued…\n\n" + cur
+        text = cur if first else "…продолжение…\n\n" + cur
         first_message_sent = True
         return text
 
@@ -907,7 +907,7 @@ async def send_matches_list(
 
         if len(candidate) > TELEGRAM_MAX_MESSAGE_LEN and current.strip():
             # flush current chunk
-            text_to_send = current if first_chunk else "…continued…\n\n" + current
+            text_to_send = current if first_chunk else "…продолжение…\n\n" + current
             await message.reply_text(text_to_send)
             if SEARCH_RESULTS_MESSAGE_DELAY_SECONDS > 0:
                 await asyncio.sleep(SEARCH_RESULTS_MESSAGE_DELAY_SECONDS)
@@ -919,7 +919,7 @@ async def send_matches_list(
 
     # Flush remaining buffer
     if current.strip():
-        text_to_send = current if first_chunk else "…continued…\n\n" + current
+        text_to_send = current if first_chunk else "…продолжение…\n\n" + current
         await message.reply_text(text_to_send)
 
 
@@ -979,7 +979,7 @@ async def check_inpx(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         return
 
     if not context.args:
-        await message.reply_text("Usage: /lookup <pattern>")
+        await message.reply_text("Использование: /find <ключевые слова>")
         return
 
     # Detect optional --all / +all at the end
@@ -990,7 +990,7 @@ async def check_inpx(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         args = args[:-1]
 
     if not args:
-        await message.reply_text("Usage: /lookup <pattern>")
+        await message.reply_text("Использование: /find <ключевые слова>")
         return
 
     # Keep this string so we can show the user how to re-run with --all
@@ -998,7 +998,7 @@ async def check_inpx(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
     pattern = original_pattern_for_echo
     if not pattern:
-        await message.reply_text("Pattern must not be empty.")
+        await message.reply_text("Необходимо указать ключевые слова.")
         return
 
     # Run heavy search in a thread
@@ -1009,7 +1009,7 @@ async def check_inpx(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     )
 
     if not matches:
-        await message.reply_text("not found")
+        await message.reply_text("не найдено")
         return
 
     # Collapse truly identical records and sort for nicer display
@@ -1024,8 +1024,8 @@ async def check_inpx(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     # If many results and no explicit +all, ask for confirmation
     if total_matches > CHECK_CONFIRM_THRESHOLD and not show_all:
         header_lines = [
-            f"Found {total_matches} matching record(s). "
-            "Refine your query or press the button below:"
+            f"Найдено {total_matches} подходящих записей. "
+            "Уточните запрос или нажмите кнопку:"
         ]
 
         keyboard = InlineKeyboardMarkup(
@@ -1063,12 +1063,12 @@ async def show_all_results_callback(
 
     key = _cache_key_from_update(update)
     if key is None:
-        await query.message.reply_text("No cached search results available.")
+        await query.message.reply_text("Результаты поиска недоступны. Повторите поиск еще раз.")
         return
 
     matches = MATCH_CACHE.get(key)
     if not matches:
-        await query.message.reply_text("No cached search results available.")
+        await query.message.reply_text("Результаты поиска недоступны. Повторите поиск еще раз.")
         return
 
     # We don't know if the original search was truncated; assume False here.
@@ -1077,7 +1077,7 @@ async def show_all_results_callback(
         message=query.message,
         matches=matches,
         truncated=False,
-        header_prefix="All matches",
+        header_prefix="Все совпадения",
     )
 
 
@@ -1096,11 +1096,11 @@ async def pickfmt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     if not context.args:
         await message.reply_text(
-            "Usage: /get <number> [format]\n"
-            "Examples:\n"
-            "  /get 1        – send original file\n"
-            "  /get 1 epub   – convert to EPUB\n"
-            "  /get 1 pdf    – convert to PDF"
+            "Использование: /get <номер> [формат]\n"
+            "Пример:\n"
+            "  /get 1        – отправит оригинальный файл\n"
+            "  /get 1 epub   – конвертирует первую книгу в EPUB\n"
+            "  /get 1 pdf    – конвертирует первую книгу в PDF"
         )
         return
         
@@ -1109,7 +1109,7 @@ async def pickfmt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         index = int(context.args[0])
     except ValueError:
         await message.reply_text(
-            "First argument must be a number, e.g. /get 1 epub"
+            "Первый аргумент должен быть числом, напр. /get 1 epub"
         )
         return
 
@@ -1120,15 +1120,14 @@ async def pickfmt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     key = _cache_key_from_update(update)
     if key is None or key not in MATCH_CACHE:
         await message.reply_text(
-            "I don’t have any recent search results for you. "
-            "Run /find <pattern> first."
+            "Сначала выполните поиск\n"
         )
         return
 
     matches = MATCH_CACHE[key]
     if not 1 <= index <= len(matches):
         await message.reply_text(
-            f"Choice out of range. You have {len(matches)} stored result(s)."
+            f"Поиск не содержат результата с таким номером: всего было найдено {len(matches)} книг"
         )
         return
 
@@ -1157,7 +1156,7 @@ async def pickfmt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
         if not tmp_book_path:
             await message.reply_text(
-                "This record was found, but the book could not be extracted."
+                "Запись была найдена, но книгу не получилось извлечь. Запросите другую книгу."
             )
             return
 
@@ -1177,7 +1176,7 @@ async def pickfmt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 e,
             )
             await message.reply_text(
-                "Book was extracted, but I failed to send the file."
+                "Книга извлечена, но ее не получилось отправить :("
             )
         finally:
             try:
@@ -1196,7 +1195,7 @@ async def pickfmt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     if not tmp_out_path:
         await message.reply_text(
-            f"This record was found, but I couldn't extract or convert the book to {target_format!r}."
+            f"Запись найдена, но извлечь или преобразовать книгу в формат {target_format!r} не получилось :("
         )
         return
 
@@ -1206,7 +1205,7 @@ async def pickfmt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 document=f,
                 filename=send_name or os.path.basename(tmp_out_path),
                 caption=build_safe_caption(
-                    f"found (converted to {target_format.upper()})", match
+                    f"найдено (конвертировано в {target_format.upper()})", match
                 ),
             )
     except Exception as e:
@@ -1217,7 +1216,7 @@ async def pickfmt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             e,
         )
         await message.reply_text(
-            f"Book was converted to {target_format.upper()}, but I failed to send the file."
+            f"Книга конвертирована в {target_format.upper()}, но ее не получилось отправить."
         )
     finally:
         try:
@@ -1236,27 +1235,26 @@ async def info_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
 
     if not context.args:
-        await message.reply_text("Usage: /info <number>")
+        await message.reply_text("Использование: /info <номер в поиске>")
         return
 
     try:
         index = int(context.args[0])
     except ValueError:
-        await message.reply_text("First argument must be a number, e.g. /info 1")
+        await message.reply_text("Первый аргумент должен быть числом, напр. /info 1")
         return
 
     key = _cache_key_from_update(update)
     if key is None or key not in MATCH_CACHE:
         await message.reply_text(
-            "I don’t have any recent search results for you. "
-            "Run /lookup <pattern> first."
+            "Результаты поиска неизвестны. Выполните поиск."
         )
         return
 
     matches = MATCH_CACHE[key]
     if not 1 <= index <= len(matches):
         await message.reply_text(
-            f"Choice out of range. You have {len(matches)} stored result(s)."
+            f"Поиск не содержат результата с таким номером: всего было найдено {len(matches)} книг"
         )
         return
 
@@ -1267,7 +1265,7 @@ async def info_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not fields:
         # Shouldn't happen after we changed parse_inpx_record, but be defensive
         await message.reply_text(
-            "Detailed INPX fields were not stored for this result."
+            "Метаданные отсутствуют в INPX-каталоге"
         )
         return
 
@@ -1279,7 +1277,7 @@ async def info_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     # Build human-readable info text
     lines = []
-    lines.append("INPX record details:")
+    lines.append("Метаданные книги:")
     lines.append("")
 
     inpx_path = match.get("inpx_path") or ""
@@ -1299,13 +1297,13 @@ async def info_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         lines.append(f"{label}: {value}")
 
     lines.append("")
-    lines.append(f"Container INPX: {os.path.basename(match.get('inpx_path') or '<?>')}")
-    lines.append(f"Index file inside INPX: {match.get('index_inner_name') or '<?>'}")
-    lines.append(f"Container path (relative): {match.get('container_relpath') or '<?>'}")
-    lines.append(f"Inner book name: {match.get('inner_book_name') or '<?>'}")
-    lines.append(f"Detected extension: {match.get('ext') or('<?>' )}")
+    lines.append(f"Контейнер каталога: {os.path.basename(match.get('inpx_path') or '<?>')}")
+    lines.append(f"Файл индекса внутри контейнера: {match.get('index_inner_name') or '<?>'}")
+    lines.append(f"Путь к контейнеру (относительный): {match.get('container_relpath') or '<?>'}")
+    lines.append(f"Внутреннее имя книги: {match.get('inner_book_name') or '<?>'}")
+    lines.append(f"Выявленное расширение: {match.get('ext') or('<?>' )}")
     lines.append("")
-    lines.append(f"Actual book size: {size_str}")
+    lines.append(f"Действительный объем: {size_str}")
 
     text = "\n".join(lines)
     await message.reply_text(text)
@@ -1324,8 +1322,8 @@ async def export_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
     if not os.path.isdir(CACHE_DIR):
         await message.reply_text(
-            "Catalog export is not available right now.\n"
-            "The background job has not generated any parts yet."
+            "Экспорт из каталога сейчас недоступен.\n"
+            "Повторите попытку завтра."
         )
         return
 
@@ -1348,8 +1346,8 @@ async def export_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
     if not all_files:
         await message.reply_text(
-            "Catalog export is not available right now.\n"
-            "The background job has not generated any parts yet."
+            "Экспорт каталога сейчас недоступен.\n"
+            "Повторите попытку завтра."
         )
         return
 
@@ -1386,7 +1384,7 @@ async def export_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         except Exception as e:
             logger.error("Failed to send catalog part %s: %s", path, e)
             await message.reply_text(
-                f"Failed to send catalog part {idx} ({name})."
+                f"Не получилось послать том каталога {idx} ({name})."
             )
 
 
@@ -1462,10 +1460,10 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
 async def post_init(application: Application) -> None:
     # Only the "canonical" commands; aliases still work but won't be suggested
     commands = [
-        BotCommand("find", "Search for a book by keywords"),
-        BotCommand("get", "Retrieve a book by search index"),
-        BotCommand("info", "Show details for a book by search index"),
-        BotCommand("dump", "Download full catalog"),
+        BotCommand("find", "Искать книгу по ключевым словам. Пробел = И, -слово = НЕ"),
+        BotCommand("get", "Получить книгу по номеру в поиске"),
+        BotCommand("info", "Получить информацию о книге по номеру в поиске"),
+        BotCommand("dump", "Получить полный каталог"),
     ]
     await application.bot.set_my_commands(commands)
 
