@@ -10,10 +10,11 @@ import tempfile
 import subprocess
 import html
 
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand
 from telegram.constants import ParseMode
 from telegram.ext import (
     ApplicationBuilder,
+    Application,
     CommandHandler,
     MessageHandler,
     CallbackQueryHandler,
@@ -1458,10 +1459,26 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
     logger.error("Exception while handling an update:", exc_info=context.error)
 
 
+async def post_init(application: Application) -> None:
+    # Only the "canonical" commands; aliases still work but won't be suggested
+    commands = [
+        BotCommand("find", "Search for a book by keywords"),
+        BotCommand("get", "Retrieve a book by search index"),
+        BotCommand("info", "Show details for a book by search index"),
+        BotCommand("dump", "Download full catalog"),
+    ]
+    await application.bot.set_my_commands(commands)
+
+
 def main() -> None:
     load_config()
 
-    application = ApplicationBuilder().token(BOT_TOKEN).build()
+    application = (
+        ApplicationBuilder()
+        .token(BOT_TOKEN)
+        .post_init(post_init)
+        .build()
+    )
 
     allowed_users_filter = filters.User(user_id=ALLOWED_USER_IDS)
 
