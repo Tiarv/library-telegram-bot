@@ -37,6 +37,8 @@ KNOWN_COMMANDS = {
     "pick", "get", "p", "g",
     # info
     "info",
+    # compare
+    "compare",
     # export / catalog / dump aliases
     "export", "catalog", "dump",
 }
@@ -816,6 +818,7 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "    /get 3 epub    – конвертирует книгу в EPUB\n"
         "  Поддерживаемые форматы включают: epub, fb2, pdf, txt, html, doc, mobi и другие\n"        
         "/info <n>          Показывает данные о книге по номеру #n из поиска.\n"
+        "/compare a b       Сравнить данные о книгах #n1 и #n2 из поиска.\n"
         "/dump              Полный каталог всех книг (CSV в zip).\n"    )
 
     await message.reply_text(
@@ -1127,7 +1130,7 @@ async def pickfmt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     matches = MATCH_CACHE[key]
     if not 1 <= index <= len(matches):
         await message.reply_text(
-            f"Поиск не содержат результата с таким номером: всего было найдено {len(matches)} книг"
+            f"Поиск не содержит результата с таким номером: всего было найдено {len(matches)} книг"
         )
         return
 
@@ -1254,7 +1257,7 @@ async def info_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     matches = MATCH_CACHE[key]
     if not 1 <= index <= len(matches):
         await message.reply_text(
-            f"Поиск не содержат результата с таким номером: всего было найдено {len(matches)} книг"
+            f"Поиск не содержит результата с таким номером: всего было найдено {len(matches)} книг"
         )
         return
 
@@ -1272,7 +1275,7 @@ async def info_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     # Compute size in background (extraction is I/O heavy)
     size_bytes = await asyncio.to_thread(get_book_size_for_match, match)
     size_str = (
-        format_mb(size_bytes) if isinstance(size_bytes, int) else "unknown (could not extract)"
+        format_mb(size_bytes) if isinstance(size_bytes, int) else "неизвестно (не удалось извлечь)"
     )
 
     # Build human-readable info text
@@ -1307,6 +1310,131 @@ async def info_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     text = "\n".join(lines)
     await message.reply_text(text)
+
+
+async def compare_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    /compare a b – compare INPX metadata for two results from the last search.
+    """
+    message = update.effective_message
+    if message is None:
+        return
+
+    if len(context.args) < 2:
+        await message.reply_text("Использование: /compare <номер первой книги из поиска> <номер второй книги из поиска>")
+        return
+
+    try:
+        idx1 = int(context.args[0])
+        idx2 = int(context.args[1])
+    except ValueError:
+        await message.reply_text(
+            "Оба аргумента должны быть числами, напр. /compare 1 2"
+        )
+        return
+
+    key = _cache_key_from_update(update)
+    if key is None or key not in MATCH_CACHE:
+        await message.reply_text(
+            "Сначала выполните поиск."
+        )
+        return
+
+    matches = MATCH_CACHE[key]
+    total = len(matches)
+    if not (1 <= idx1 <= total) or not (1 <= idx2 <= total):
+        await message.reply_text(
+            f"Поиск не содержит результата с таким номером: всего было найдено {len(matches)} книг."
+        )
+        return
+
+    match1 = matches[idx1 - 1]
+    match2 = matches[idx2 - 1]
+
+    fields1 = match1.get("fields") or []
+    fields2 = match2.get("fields") or []
+
+    if not fields1 and not fields2:
+        await message.reply_text("Метаданные для данных книг не найдены.")
+        return
+
+    inpx1 = match1.get("inpx_path") or ""
+    inpx2 = match2.get("inpx_path") or ""
+    names1 = _read_inpx_field_names(inpx1) if inpx1 else None
+    names2 = _read_inpx_field_names(inpx2) if inpx2 else None
+
+    max_len = max(len(fields1), len(fields2))
+    diff_lines: list[str] = []
+
+    for i in range(1, max_len + 1):
+        v1 = fields1[i - 1].strip() if i <= len(fields1) else ""
+        v2 = fields2[i - 1].strip() if i <= len(fields2) else ""
+        if v1 == v2:
+            continue
+
+        label = None
+        if names1 and i <= len(names1) and names1[i - 1].strip():
+            label = names1[i - 1].strip()
+        if not label and names2 and i <= len(names2) and names2[i - 1].strip():
+            label = names2[i - 1].strip()
+        if not label:
+            label = f"Field {i}"
+
+        if not v1:
+            v1 = "«empty»"
+        if not v2:
+            v2 = "«empty»"
+
+        diff_lines.append(f"{label}:")
+        diff_lines.append(f"  #{idx1}: {v1}")
+        diff_lines.append(f"  #{idx2}: {v2}")
+        diff_lines.append("")
+
+    header_lines: list[str] = []
+    header_lines.append(
+        f"Сравнение книг #{idx1} и #{idx2} из последнего поиска:"
+    )
+
+    def summarize(rec: dict, idx: int) -> None:
+        author = rec.get("author") or "<?>"
+        title = rec.get("title") or "<?>"
+        ext = rec.get("ext") or "<?>"
+        inpx_name = os.path.basename(rec.get("inpx_path") or "") or "<?>"
+        rel = rec.get("container_relpath") or "<?>"
+        inner = rec.get("inner_book_name") or "<?>"
+        header_lines.append(f"  #{idx}: {author} — {title} {ext}")
+        header_lines.append(f"       Индекс: {inpx_name}")
+        header_lines.append(f"       Путь: {rel}")
+        header_lines.append(f"       Файл: {inner}")
+
+    summarize(match1, idx1)
+    summarize(match2, idx2)
+
+    header_lines.append("")
+
+    if not diff_lines:
+        header_lines.append(
+            "Различий не обнаружено"
+        )
+        text = "\n".join(header_lines)
+    else:
+        header_lines.append("Различающиеся поля:")
+        header_lines.append("")
+        text = "\n".join(header_lines + diff_lines)
+
+    # Very unlikely this hits Telegram limits, but be safe:
+    if len(text) > TELEGRAM_MAX_MESSAGE_LEN:
+        chunks = [
+            text[i : i + TELEGRAM_MAX_MESSAGE_LEN]
+            for i in range(0, len(text), TELEGRAM_MAX_MESSAGE_LEN)
+        ]
+        for i, chunk in enumerate(chunks):
+            if i == 0:
+                await message.reply_text(chunk)
+            else:
+                await message.reply_text("…продолжение…\n\n" + chunk)
+    else:
+        await message.reply_text(text)
 
 
 async def export_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1499,6 +1627,9 @@ def main() -> None:
     )
     application.add_handler(
         CommandHandler("info", info_cmd, filters=allowed_users_filter)
+    )
+    application.add_handler(
+        CommandHandler("compare", compare_cmd, filters=allowed_users_filter)
     )
     application.add_handler(
         CommandHandler(
