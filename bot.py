@@ -1344,7 +1344,7 @@ async def info_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
 
     if not context.args:
-        await message.reply_text("Использование: /info &lt;номер в поиске&gt;")
+        await message.reply_text("Использование: /info <номер в поиске>")
         return
 
     try:
@@ -1385,7 +1385,7 @@ async def info_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
 
     # Build human-readable info text
-    lines = []
+    lines: list[str] = []
     lines.append("Метаданные книги:")
     lines.append("")
 
@@ -1402,7 +1402,6 @@ async def info_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         else:
             label = f"Field {i}"
 
-        # You can normalize label if you want: label = label.lower()
         lines.append(f"{label}: {value}")
 
     lines.append("")
@@ -1415,7 +1414,17 @@ async def info_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     lines.append(f"Действительный объем: {size_str}")
 
     text = "\n".join(lines)
-    await message.reply_text(text)
+
+    # --- NEW: chunk long /info output safely ---
+    if len(text) > TELEGRAM_MAX_MESSAGE_LEN:
+        for i in range(0, len(text), TELEGRAM_MAX_MESSAGE_LEN):
+            chunk = text[i : i + TELEGRAM_MAX_MESSAGE_LEN]
+            if i == 0:
+                await message.reply_text(chunk)
+            else:
+                await message.reply_text("…продолжение…\n\n" + chunk)
+    else:
+        await message.reply_text(text)
 
 
 async def compare_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
