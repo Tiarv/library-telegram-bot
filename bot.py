@@ -982,18 +982,21 @@ async def check_inpx(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         return
 
     if context.args:
-        pattern_text = " ".join(context.args).strip()
+        args = list(context.args)
     else:
-        pattern_text = (message.text or "").strip()
+        text = (message.text or "").strip()
+        args = text.split() if text else []
 
-    if not pattern_text:
+    if not args:
         await message.reply_text(
-            "Please provide a search query, e.g. 'Asimov Robots epub'."
+            "Please provide a search query, e.g.:\n"
+            "  Asimov Robots\n"
+            "  Asimov Robots epub\n"
         )
         return
-
-    raw_pattern = pattern_text
-
+        
+    raw_pattern = " ".join(args).strip()
+    
     # Detect optional --all / +all at the end
     show_all = False
     args = list(context.args)
