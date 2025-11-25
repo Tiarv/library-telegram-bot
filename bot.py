@@ -906,27 +906,22 @@ async def send_matches_list(
         await message.reply_text("not found")
         return
 
+    # Build list lines, trimming any single line that is too huge
     lines: list[str] = []
-    # we only *display* up to MAX_MATCH_DISPLAY
+    # leave some margin per line so that one monster record does not explode a message
+    max_line_len = max(100, TELEGRAM_MAX_MESSAGE_LEN - 200)
+
     for idx, rec in enumerate(matches[:MAX_MATCH_DISPLAY], start=1):
         author = rec.get("author") or "<?>"
         title = rec.get("title") or "<?>"
-        ext = (rec.get("ext") or "<?>").strip()
+        ext = rec.get("ext") or "<?>"
 
-        author_html = html.escape(author)
-        title_html = html.escape(title)
-        ext_text = ext or "<?>"
+        line = f"{idx}) {author} — {title} {ext}"
 
-        # make just the extension a deep link, if we know our username
-        if BOT_USERNAME and ext_text != "<?>":
-            start_param = f"get_{idx}"
-            link = f"https://t.me/{BOT_USERNAME}?start={start_param}"
-            ext_html = f'<a href="{html.escape(link)}">{html.escape(ext_text)}</a>'
-        else:
-            ext_html = html.escape(ext_text)
+        if len(line) > max_line_len:
+            # hard-trim the line; user still sees the beginning + ellipsis
+            line = line[: max_line_len - 1] + "…"
 
-        # final line: N) Author — Title EXT
-        line = f"{idx}) {author_html} — {title_html} {ext_html}"
         lines.append(line)
 
     shown = min(total_matches, MAX_MATCH_DISPLAY)
@@ -935,10 +930,6 @@ async def send_matches_list(
     if truncated:
         header += f"+, search truncated at {MAX_MATCH_COLLECT}"
     header += ").\n"
-    header += (
-        f"Отображаются первые {shown} результатов. "
-        "Уточните запрос или выберите книгу при помощи /get &lt;номер&gt;.\n\n"
-    )
 
     first_chunk = True
     current = header
@@ -947,12 +938,14 @@ async def send_matches_list(
         candidate = current + line + "\n"
 
         if len(candidate) > TELEGRAM_MAX_MESSAGE_LEN and current.strip():
+            # Flush current chunk
             text_to_send = current if first_chunk else "…продолжение…\n\n" + current
-            await message.reply_text(
-                text_to_send,
-                parse_mode=ParseMode.HTML,
-                disable_web_page_preview=True,
-            )
+
+            # Hard safety: never send more than Telegram allows
+            if len(text_to_send) > TELEGRAM_HARD_LIMIT:
+                text_to_send = text_to_send[: TELEGRAM_HARD_LIMIT - 1]
+
+            await message.reply_text(text_to_send)
             if SEARCH_RESULTS_MESSAGE_DELAY_SECONDS > 0:
                 await asyncio.sleep(SEARCH_RESULTS_MESSAGE_DELAY_SECONDS)
             first_chunk = False
@@ -960,13 +953,14 @@ async def send_matches_list(
         else:
             current = candidate
 
+    # Flush remaining buffer
     if current.strip():
         text_to_send = current if first_chunk else "…продолжение…\n\n" + current
-        await message.reply_text(
-            text_to_send,
-            parse_mode=ParseMode.HTML,
-            disable_web_page_preview=True,
-        )
+
+        if len(text_to_send) > TELEGRAM_HARD_LIMIT:
+            text_to_send = text_to_send[: TELEGRAM_HARD_LIMIT - 1]
+
+        await message.reply_text(text_to_send)
 
 
 def dedupe_and_sort_matches(matches: list[dict]) -> list[dict]:
