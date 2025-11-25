@@ -63,6 +63,7 @@ TELEGRAM_MAX_MESSAGE_LEN = 3900
 MAX_CAPTION_LEN = 3001
 CHECK_CONFIRM_THRESHOLD = 20
 SEARCH_RESULTS_MESSAGE_DELAY_SECONDS = 2.0
+MAX_RESULTS_PER_MESSAGE = 25
 
 SEPARATORS = ("\x04", "\t", ";", "|")
 
@@ -859,8 +860,6 @@ def _cache_key_from_update(update: Update) -> tuple[int, int] | None:
     return (chat.id, user.id)
 
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-
 async def send_matches_list(
     message,
     matches: list[dict],
@@ -872,35 +871,62 @@ async def send_matches_list(
         await message.reply_text("not found")
         return
 
+    # How many we actually show at all
     shown = min(total_matches, MAX_MATCH_DISPLAY)
 
-    header = f"{header_prefix} ({total_matches}"
-    if truncated:
-        header += f"+, search truncated at {MAX_MATCH_COLLECT}"
-    header += ").\n"
-    header += (
-        f"Отображаются первые {shown} результатов.\n"
-        "Нажмите на книгу, чтобы получить её, или используйте /get <номер>.\n"
-    )
+    # We’ll send results in chunks of MAX_RESULTS_PER_MESSAGE
+    PAGE_SIZE = MAX_RESULTS_PER_MESSAGE
 
-    # One button per result, text = line contents
-    keyboard_rows = []
-    for idx, rec in enumerate(matches[:shown], start=1):
-        author = rec.get("author") or "<?>"
-        title = rec.get("title") or "<?>"
-        ext = rec.get("ext") or "<?>"
+    for page_start in range(0, shown, PAGE_SIZE):
+        page_end = min(page_start + PAGE_SIZE, shown)
+        chunk = matches[page_start:page_end]
 
-        btn_text = f"{idx}) {author} — {title} {ext}"
-        keyboard_rows.append([
-            InlineKeyboardButton(
-                text=btn_text,
-                callback_data=f"get:{idx}",
+        lines = []
+        keyboard_rows = []
+
+        # global_index is 1-based index that matches what /get N expects
+        for global_index, rec in enumerate(chunk, start=page_start + 1):
+            author = rec.get("author") or "<?>"
+            title = rec.get("title") or "<?>"
+            ext = rec.get("ext") or "<?>"
+
+            line = f"{global_index}) {author} — {title} {ext}"
+            lines.append(line)
+
+            keyboard_rows.append([
+                InlineKeyboardButton(
+                    text=line,
+                    callback_data=f"get:{global_index}",
+                )
+            ])
+
+        if page_start == 0:
+            # First page gets the full header
+            header = f"{header_prefix} ({total_matches}"
+            if truncated:
+                header += f"+, search truncated at {MAX_MATCH_COLLECT}"
+            header += ").\n"
+            header += (
+                f"Отображаются первые {shown} результатов.\n"
+                "Нажмите на книгу, чтобы получить её, или используйте /get <номер>.\n\n"
             )
-        ])
+        else:
+            header = (
+                f"Продолжение результатов {page_start + 1}–{page_end} "
+                f"из {total_matches}:\n\n"
+            )
 
-    reply_markup = InlineKeyboardMarkup(keyboard_rows)
+        body = header + "\n".join(lines)
 
-    await message.reply_text(header, reply_markup=reply_markup)
+        # If you still want to be super-safe, you can clip by TELEGRAM_MAX_MESSAGE_LEN here,
+        # but with PAGE_SIZE ~25 you’re unlikely to hit it.
+        reply_markup = InlineKeyboardMarkup(keyboard_rows)
+
+        await message.reply_text(body, reply_markup=reply_markup)
+
+        # Optional small delay between pages if you already use this constant
+        if SEARCH_RESULTS_MESSAGE_DELAY_SECONDS > 0 and page_end < shown:
+            await asyncio.sleep(SEARCH_RESULTS_MESSAGE_DELAY_SECONDS)
 
 
 def dedupe_and_sort_matches(matches: list[dict]) -> list[dict]:
