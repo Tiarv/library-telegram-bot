@@ -981,6 +981,7 @@ async def check_inpx(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     if message is None:
         return
 
+    # Args from /find command or from plain text message
     if context.args:
         args = list(context.args)
     else:
@@ -994,27 +995,15 @@ async def check_inpx(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
             "  Asimov Robots epub\n"
         )
         return
-        
-raw_pattern = " ".join(args).strip()
 
-# Detect optional --all / +all at the end
-show_all = False
-# args is already populated above (from context.args or from message.text)
-if args and args[-1].lower() in ("--all", "+all"):
-    show_all = True
-    args = args[:-1]
+    # Before we strip +all/--all, remember the raw query if you ever need it
+    raw_pattern = " ".join(args).strip()
 
-if not args:
-    await message.reply_text("Использование: /find <ключевые слова>")
-    return
-
-# Keep this string so we can show the user how to re-run with --all
-original_pattern_for_echo = " ".join(args).strip()
-
-pattern = original_pattern_for_echo
-if not pattern:
-    await message.reply_text("Необходимо указать ключевые слова.")
-    return
+    # Detect optional --all / +all at the end
+    show_all = False
+    if args and args[-1].lower() in ("--all", "+all"):
+        show_all = True
+        args = args[:-1]
 
     if not args:
         await message.reply_text("Использование: /find <ключевые слова>")
@@ -1022,7 +1011,6 @@ if not pattern:
 
     # Keep this string so we can show the user how to re-run with --all
     original_pattern_for_echo = " ".join(args).strip()
-
     pattern = original_pattern_for_echo
     if not pattern:
         await message.reply_text("Необходимо указать ключевые слова.")
@@ -1079,7 +1067,6 @@ if not pattern:
         truncated=truncated,
         header_prefix="Matches",
     )
-    return
     
 
 async def show_all_results_callback(
