@@ -981,9 +981,18 @@ async def check_inpx(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     if message is None:
         return
 
-    if not context.args:
-        await message.reply_text("Использование: /find <ключевые слова>")
+    if context.args:
+        pattern_text = " ".join(context.args).strip()
+    else:
+        pattern_text = (message.text or "").strip()
+
+    if not pattern_text:
+        await message.reply_text(
+            "Please provide a search query, e.g. 'Asimov Robots epub'."
+        )
         return
+
+    raw_pattern = pattern_text
 
     # Detect optional --all / +all at the end
     show_all = False
@@ -1659,11 +1668,10 @@ def main() -> None:
         group=1,
     )
     application.add_handler(
-    MessageHandler(
-        filters.TEXT & ~filters.COMMAND & allowed_users_filter,
-        help_cmd,
-    ),
-    group=1,
+        MessageHandler(
+            filters.TEXT & ~filters.COMMAND & allowed_users_filter,
+            check_inpx,
+        ),
     )
     
     application.add_error_handler(error_handler)
