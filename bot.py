@@ -859,6 +859,8 @@ def _cache_key_from_update(update: Update) -> tuple[int, int] | None:
     return (chat.id, user.id)
 
 
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
 async def send_matches_list(
     message,
     matches: list[dict],
@@ -870,14 +872,6 @@ async def send_matches_list(
         await message.reply_text("not found")
         return
 
-    # Build list lines
-    lines: list[str] = []
-    for idx, rec in enumerate(matches[:MAX_MATCH_DISPLAY], start=1):
-        author = rec.get("author") or "<?>"
-        title = rec.get("title") or "<?>"
-        ext = rec.get("ext") or "<?>"
-        lines.append(f"{idx}) {author} — {title} {ext}")
-
     shown = min(total_matches, MAX_MATCH_DISPLAY)
 
     header = f"{header_prefix} ({total_matches}"
@@ -885,47 +879,28 @@ async def send_matches_list(
         header += f"+, search truncated at {MAX_MATCH_COLLECT}"
     header += ").\n"
     header += (
-        f"Отображаются первые {shown} результатов. "
-        "Уточните запрос или выберите книгу при помощи /get <number>.\n\n"
+        f"Отображаются первые {shown} результатов.\n"
+        "Нажмите на книгу, чтобы получить её, или используйте /get <номер>.\n"
     )
 
-    # Build inline keyboard: one button per result (you may want to cap this)
+    # One button per result, text = line contents
     keyboard_rows = []
-    for idx in range(1, shown + 1):
+    for idx, rec in enumerate(matches[:shown], start=1):
+        author = rec.get("author") or "<?>"
+        title = rec.get("title") or "<?>"
+        ext = rec.get("ext") or "<?>"
+
+        btn_text = f"{idx}) {author} — {title} {ext}"
         keyboard_rows.append([
             InlineKeyboardButton(
-                text=f"📖 #{idx}",
+                text=btn_text,
                 callback_data=f"get:{idx}",
             )
         ])
-    reply_markup = InlineKeyboardMarkup(keyboard_rows) if keyboard_rows else None
 
-    # Chunked sending as you already do
-    first_chunk = True
-    current = header
+    reply_markup = InlineKeyboardMarkup(keyboard_rows)
 
-    for line in lines:
-        candidate = current + line + "\n"
-
-        if len(candidate) > TELEGRAM_MAX_MESSAGE_LEN and current.strip():
-            text_to_send = current if first_chunk else "…продолжение…\n\n" + current
-            await message.reply_text(
-                text_to_send,
-                reply_markup=reply_markup if first_chunk else None,
-            )
-            if SEARCH_RESULTS_MESSAGE_DELAY_SECONDS > 0:
-                await asyncio.sleep(SEARCH_RESULTS_MESSAGE_DELAY_SECONDS)
-            first_chunk = False
-            current = line + "\n"
-        else:
-            current = candidate
-
-    if current.strip():
-        text_to_send = current if first_chunk else "…продолжение…\n\n" + current
-        await message.reply_text(
-            text_to_send,
-            reply_markup=reply_markup if first_chunk else None,
-        )
+    await message.reply_text(header, reply_markup=reply_markup)
 
 
 def dedupe_and_sort_matches(matches: list[dict]) -> list[dict]:
