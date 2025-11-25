@@ -47,6 +47,7 @@ KNOWN_COMMANDS = {
 ALLOWED_USER_IDS: set[int] = set()
 INPX_FILES: list[str] = []
 BOT_TOKEN: str | None = None
+BOT_USERNAME: str | None = None
 
 # Cache of last search results per (chat_id, user_id)
 # key: (chat_id, user_id) -> list of match dicts
@@ -802,7 +803,25 @@ def extract_book_for_match(match: dict):
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    # Just show the help text when user hits /start
+    message = update.effective_message
+
+    # Deep-link handling: /start get_<n>
+    if context.args:
+        arg = context.args[0]
+        if arg.startswith("get_"):
+            try:
+                index = int(arg.split("_", 1)[1])
+            except ValueError:
+                if message:
+                    await message.reply_text("Неверный параметр ссылки.")
+                return
+
+            # Reuse /get logic by faking context.args = [index]
+            context.args = [str(index)]
+            await pickfmt(update, context)
+            return
+
+    # Default behaviour: show help
     await help_cmd(update, context)
 
 
@@ -871,62 +890,69 @@ async def send_matches_list(
         await message.reply_text("not found")
         return
 
-    # How many we actually show at all
+    # Build list lines (with optional deep link per line)
+    lines: list[str] = []
+    for idx, rec in enumerate(matches[:MAX_MATCH_DISPLAY], start=1):
+        author = rec.get("author") or "<?>"
+        title = rec.get("title") or "<?>"
+        ext = rec.get("ext") or "<?>"
+
+        # HTML-escape text parts
+        author_html = html.escape(author)
+        title_html = html.escape(title)
+        ext_html = html.escape(ext)
+
+        # Build optional deep link
+        if BOT_USERNAME:
+            # /start get_<idx> – will be handled in start()
+            start_param = f"get_{idx}"
+            link = f"https://t.me/{BOT_USERNAME}?start={start_param}"
+            link_html = f' – <a href="{html.escape(link)}">получить</a>'
+        else:
+            link_html = ""
+
+        line = f"{idx}) {author_html} — {title_html} {ext_html}{link_html}"
+        lines.append(line)
+
     shown = min(total_matches, MAX_MATCH_DISPLAY)
 
-    # We’ll send results in chunks of MAX_RESULTS_PER_MESSAGE
-    PAGE_SIZE = MAX_RESULTS_PER_MESSAGE
+    header = f"{header_prefix} ({total_matches}"
+    if truncated:
+        header += f"+, search truncated at {MAX_MATCH_COLLECT}"
+    header += ").\n"
+    header += (
+        f"Отображаются первые {shown} результатов. "
+        "Уточните запрос или используйте ссылки «получить» или команду /get <номер>.\n\n"
+    )
 
-    for page_start in range(0, shown, PAGE_SIZE):
-        page_end = min(page_start + PAGE_SIZE, shown)
-        chunk = matches[page_start:page_end]
+    # Split into chunks that fit within TELEGRAM_MAX_MESSAGE_LEN
+    first_chunk = True
+    current = header
 
-        lines = []
-        keyboard_rows = []
+    for line in lines:
+        candidate = current + line + "\n"
 
-        # global_index is 1-based index that matches what /get N expects
-        for global_index, rec in enumerate(chunk, start=page_start + 1):
-            author = rec.get("author") or "<?>"
-            title = rec.get("title") or "<?>"
-            ext = rec.get("ext") or "<?>"
-
-            line = f"{global_index}) {author} — {title} {ext}"
-            lines.append(line)
-
-            keyboard_rows.append([
-                InlineKeyboardButton(
-                    text=line,
-                    callback_data=f"get:{global_index}",
-                )
-            ])
-
-        if page_start == 0:
-            # First page gets the full header
-            header = f"{header_prefix} ({total_matches}"
-            if truncated:
-                header += f"+, search truncated at {MAX_MATCH_COLLECT}"
-            header += ").\n"
-            header += (
-                f"Отображаются первые {shown} результатов.\n"
-                "Нажмите на книгу, чтобы получить её, или используйте /get <номер>.\n\n"
+        if len(candidate) > TELEGRAM_MAX_MESSAGE_LEN and current.strip():
+            text_to_send = current if first_chunk else "…продолжение…\n\n" + current
+            await message.reply_text(
+                text_to_send,
+                parse_mode=ParseMode.HTML,
+                disable_web_page_preview=True,
             )
+            if SEARCH_RESULTS_MESSAGE_DELAY_SECONDS > 0:
+                await asyncio.sleep(SEARCH_RESULTS_MESSAGE_DELAY_SECONDS)
+            first_chunk = False
+            current = line + "\n"
         else:
-            header = (
-                f"Продолжение результатов {page_start + 1}–{page_end} "
-                f"из {total_matches}:\n\n"
-            )
+            current = candidate
 
-        body = header + "\n".join(lines)
-
-        # If you still want to be super-safe, you can clip by TELEGRAM_MAX_MESSAGE_LEN here,
-        # but with PAGE_SIZE ~25 you’re unlikely to hit it.
-        reply_markup = InlineKeyboardMarkup(keyboard_rows)
-
-        await message.reply_text(body, reply_markup=reply_markup)
-
-        # Optional small delay between pages if you already use this constant
-        if SEARCH_RESULTS_MESSAGE_DELAY_SECONDS > 0 and page_end < shown:
-            await asyncio.sleep(SEARCH_RESULTS_MESSAGE_DELAY_SECONDS)
+    if current.strip():
+        text_to_send = current if first_chunk else "…продолжение…\n\n" + current
+        await message.reply_text(
+            text_to_send,
+            parse_mode=ParseMode.HTML,
+            disable_web_page_preview=True,
+        )
 
 
 def dedupe_and_sort_matches(matches: list[dict]) -> list[dict]:
@@ -1667,6 +1693,9 @@ async def post_init(application: Application) -> None:
     ]
     await application.bot.set_my_commands(commands)
 
+    global BOT_USERNAME
+    me = await application.bot.get_me()
+    BOT_USERNAME = me.username
 
 def main() -> None:
     load_config()
