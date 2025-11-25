@@ -804,9 +804,6 @@ def extract_book_for_match(match: dict):
         return None, None
 
 
-from telegram.error import TelegramError  # at the top of the file
-
-
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     message = update.effective_message
 
