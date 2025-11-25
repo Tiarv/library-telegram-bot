@@ -889,41 +889,43 @@ async def send_matches_list(
         "Уточните запрос или выберите книгу при помощи /get <number>.\n\n"
     )
 
-    # Now manually split into chunks that fit into TELEGRAM_MAX_MESSAGE_LEN.
-    # First message includes the header, following ones only the lines.
+    # Build inline keyboard: one button per result (you may want to cap this)
+    keyboard_rows = []
+    for idx in range(1, shown + 1):
+        keyboard_rows.append([
+            InlineKeyboardButton(
+                text=f"📖 #{idx}",
+                callback_data=f"get:{idx}",
+            )
+        ])
+    reply_markup = InlineKeyboardMarkup(keyboard_rows) if keyboard_rows else None
+
+    # Chunked sending as you already do
     first_chunk = True
     current = header
-    first_message_sent = False
-
-    def flush_current(cur: str, first: bool) -> str:
-        """Send current text as a message and return a fresh buffer."""
-        nonlocal first_message_sent
-        if not cur.strip():
-            return ""
-        text = cur if first else "…продолжение…\n\n" + cur
-        first_message_sent = True
-        return text
 
     for line in lines:
-        # Always add newline after each line
         candidate = current + line + "\n"
 
         if len(candidate) > TELEGRAM_MAX_MESSAGE_LEN and current.strip():
-            # flush current chunk
             text_to_send = current if first_chunk else "…продолжение…\n\n" + current
-            await message.reply_text(text_to_send)
+            await message.reply_text(
+                text_to_send,
+                reply_markup=reply_markup if first_chunk else None,
+            )
             if SEARCH_RESULTS_MESSAGE_DELAY_SECONDS > 0:
                 await asyncio.sleep(SEARCH_RESULTS_MESSAGE_DELAY_SECONDS)
             first_chunk = False
-            # start new chunk with this line
             current = line + "\n"
         else:
             current = candidate
 
-    # Flush remaining buffer
     if current.strip():
         text_to_send = current if first_chunk else "…продолжение…\n\n" + current
-        await message.reply_text(text_to_send)
+        await message.reply_text(
+            text_to_send,
+            reply_markup=reply_markup if first_chunk else None,
+        )
 
 
 def dedupe_and_sort_matches(matches: list[dict]) -> list[dict]:
