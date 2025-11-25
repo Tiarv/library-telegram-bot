@@ -10,6 +10,7 @@ import tempfile
 import subprocess
 import html
 
+from telegram.error import TelegramError
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand
 from telegram.constants import ParseMode
 from telegram.ext import (
@@ -802,13 +803,19 @@ def extract_book_for_match(match: dict):
         return None, None
 
 
+from telegram.error import TelegramError  # at the top of the file
+
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     message = update.effective_message
+
+    delete_trigger_message = False
 
     # Deep-link handling: /start get_<n>
     if context.args:
         arg = context.args[0]
         if arg.startswith("get_"):
+            delete_trigger_message = True
             try:
                 index = int(arg.split("_", 1)[1])
             except ValueError:
@@ -816,14 +823,23 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                     await message.reply_text("Неверный параметр ссылки.")
                 return
 
-            # Reuse /get logic by faking context.args = [index]
+            # Pretend user ran "/get <index>"
             context.args = [str(index)]
-            await pickfmt(update, context)
+            await pickfmt(update, context)  # your /get handler
+
+            # Try to delete the triggering /start message
+            if delete_trigger_message and message:
+                try:
+                    await message.delete()
+                except TelegramError:
+                    # no rights / too old / etc. – ignore quietly
+                    pass
+
             return
 
-    # Default behaviour: show help
+    # Normal /start without deep-link: keep behaviour as-is
     await help_cmd(update, context)
-
+    
 
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     message = update.effective_message
