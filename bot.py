@@ -995,14 +995,26 @@ async def check_inpx(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         )
         return
         
-    raw_pattern = " ".join(args).strip()
-    
-    # Detect optional --all / +all at the end
-    show_all = False
-    args = list(context.args)
-    if args and args[-1].lower() in ("--all", "+all"):
-        show_all = True
-        args = args[:-1]
+raw_pattern = " ".join(args).strip()
+
+# Detect optional --all / +all at the end
+show_all = False
+# args is already populated above (from context.args or from message.text)
+if args and args[-1].lower() in ("--all", "+all"):
+    show_all = True
+    args = args[:-1]
+
+if not args:
+    await message.reply_text("Использование: /find <ключевые слова>")
+    return
+
+# Keep this string so we can show the user how to re-run with --all
+original_pattern_for_echo = " ".join(args).strip()
+
+pattern = original_pattern_for_echo
+if not pattern:
+    await message.reply_text("Необходимо указать ключевые слова.")
+    return
 
     if not args:
         await message.reply_text("Использование: /find <ключевые слова>")
