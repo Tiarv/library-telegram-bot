@@ -1241,6 +1241,63 @@ async def pickfmt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             pass
 
 
+async def get_from_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+    message = query.message
+    if message is None:
+        return
+
+    data = query.data or ""
+    try:
+        _, idx_str = data.split(":", 1)
+        index = int(idx_str)
+    except (ValueError, IndexError):
+        await message.reply_text("Неправильный номер записи.")
+        return
+
+    key = _cache_key_from_update(update)
+    if key is None or key not in MATCH_CACHE:
+        await message.reply_text("Результаты поиска недоступны. Повторите поиск еще раз.")
+        return
+
+    matches = MATCH_CACHE[key]
+    if not 1 <= index <= len(matches):
+        await message.reply_text(
+            f"Поиск не содержит результата с таким номером: всего было найдено {len(matches)} книг"
+        )
+        return
+
+    match = matches[index - 1]
+
+    # Send original file (equivalent to `/get N` without format)
+    tmp_book_path, send_name = await asyncio.to_thread(
+        extract_book_for_match,
+        match,
+    )
+
+    if not tmp_book_path:
+        await message.reply_text(
+            "Запись была найдена, но книгу не получилось извлечь. Запросите другую книгу."
+        )
+        return
+
+    try:
+        with open(tmp_book_path, "rb") as f:
+            await message.reply_document(
+                document=f,
+                filename=send_name,
+                disable_content_type_detection=True,
+            )
+    except Exception:
+        await message.reply_text("Книгу не удалось отправить :(")
+    finally:
+        try:
+            os.remove(tmp_book_path)
+        except OSError:
+            pass
+
+
 async def info_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
     /info <n> – show all INPX fields for the n-th result from the last search
@@ -1675,6 +1732,13 @@ def main() -> None:
         MessageHandler(
             filters.TEXT & ~filters.COMMAND & allowed_users_filter,
             check_inpx,
+        ),
+    )
+    application.add_handler(
+        CallbackQueryHandler(
+            get_from_callback,
+            pattern=r"^get:\d+$",
+            block=False,
         ),
     )
     
