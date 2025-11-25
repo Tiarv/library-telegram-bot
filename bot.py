@@ -906,28 +906,27 @@ async def send_matches_list(
         await message.reply_text("not found")
         return
 
-    # Build list lines (with optional deep link per line)
     lines: list[str] = []
+    # we only *display* up to MAX_MATCH_DISPLAY
     for idx, rec in enumerate(matches[:MAX_MATCH_DISPLAY], start=1):
         author = rec.get("author") or "<?>"
         title = rec.get("title") or "<?>"
-        ext = rec.get("ext") or "<?>"
+        ext = (rec.get("ext") or "<?>").strip()
 
-        # HTML-escape text parts
         author_html = html.escape(author)
         title_html = html.escape(title)
-        ext_html = html.escape(ext)
+        ext_text = ext or "<?>"
 
-        # Build optional deep link
-        if BOT_USERNAME:
-            # /start get_<idx> – will be handled in start()
+        # make just the extension a deep link, if we know our username
+        if BOT_USERNAME and ext_text != "<?>":
             start_param = f"get_{idx}"
             link = f"https://t.me/{BOT_USERNAME}?start={start_param}"
-            link_html = f' – <a href="{html.escape(link)}">получить</a>'
+            ext_html = f'<a href="{html.escape(link)}">{html.escape(ext_text)}</a>'
         else:
-            link_html = ""
+            ext_html = html.escape(ext_text)
 
-        line = f"{idx}) {author_html} — {title_html} {ext_html}{link_html}"
+        # final line: N) Author — Title EXT
+        line = f"{idx}) {author_html} — {title_html} {ext_html}"
         lines.append(line)
 
     shown = min(total_matches, MAX_MATCH_DISPLAY)
@@ -938,10 +937,9 @@ async def send_matches_list(
     header += ").\n"
     header += (
         f"Отображаются первые {shown} результатов. "
-        "Уточните запрос или используйте ссылки «получить» или команду /get &lt;номер&gt;.\n\n"
+        "Уточните запрос или выберите книгу при помощи /get &lt;номер&gt;.\n\n"
     )
 
-    # Split into chunks that fit within TELEGRAM_MAX_MESSAGE_LEN
     first_chunk = True
     current = header
 
