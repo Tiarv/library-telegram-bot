@@ -831,13 +831,13 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
 
     help_text = (
-        "/find <слова>      Поиск книги в каталогах по ключевым словам. Пробел = И, -слово = НЕ\n"        
-        "/get <n> [формат]  Получить книгу по номеру #n из поиска.\n"
+        "/find &lt;слова&gt;      Поиск книги в каталогах по ключевым словам. Пробел = И, -слово = НЕ\n"        
+        "/get &lt;n&gt; [формат]  Получить книгу по номеру #n из поиска.\n"
         "  Примеры:\n"
         "    /get 3         – отправит книгу как есть\n"
         "    /get 3 epub    – конвертирует книгу в EPUB\n"
         "  Поддерживаемые форматы включают: epub, fb2, pdf, txt, html, doc, mobi и другие\n"        
-        "/info <n>          Показывает данные о книге по номеру #n из поиска.\n"
+        "/info &lt;n&gt;          Показывает данные о книге по номеру #n из поиска.\n"
         "/compare a b       Сравнить данные о книгах #n1 и #n2 из поиска.\n"
         "/dump              Полный каталог всех книг (CSV в zip).\n"    )
 
@@ -922,7 +922,7 @@ async def send_matches_list(
     header += ").\n"
     header += (
         f"Отображаются первые {shown} результатов. "
-        "Уточните запрос или используйте ссылки «получить» или команду /get <номер>.\n\n"
+        "Уточните запрос или используйте ссылки «получить» или команду /get &lt;номер&gt;.\n\n"
     )
 
     # Split into chunks that fit within TELEGRAM_MAX_MESSAGE_LEN
@@ -1035,7 +1035,7 @@ async def check_inpx(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         args = args[:-1]
 
     if not args:
-        await message.reply_text("Использование: /find <ключевые слова>")
+        await message.reply_text("Использование: /find &lt;ключевые слова&gt;")
         return
 
     # Keep this string so we can show the user how to re-run with --all
@@ -1139,7 +1139,7 @@ async def pickfmt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     if not context.args:
         await message.reply_text(
-            "Использование: /get <номер> [формат]\n"
+            "Использование: /get &lt;номер&gt; [формат]\n"
             "Пример:\n"
             "  /get 1        – отправит оригинальный файл\n"
             "  /get 1 epub   – конвертирует первую книгу в EPUB\n"
@@ -1335,7 +1335,7 @@ async def info_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
 
     if not context.args:
-        await message.reply_text("Использование: /info <номер в поиске>")
+        await message.reply_text("Использование: /info &lt;номер в поиске&gt;")
         return
 
     try:
@@ -1418,7 +1418,7 @@ async def compare_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         return
 
     if len(context.args) < 2:
-        await message.reply_text("Использование: /compare <номер первой книги из поиска> <номер второй книги из поиска>")
+        await message.reply_text("Использование: /compare &lt;номер первой книги из поиска&gt; &lt;номер второй книги из поиска&gt;")
         return
 
     try:
