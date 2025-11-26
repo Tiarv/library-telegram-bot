@@ -1080,8 +1080,6 @@ async def check_inpx(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         )
         return
 
-    raw_pattern = " ".join(args).strip()
-
     show_all = False
     if args and args[-1].lower() in ("--all", "+all"):
         show_all = True
@@ -1091,15 +1089,13 @@ async def check_inpx(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         await message.reply_text("Использование: /find <ключевые слова>")
         return
 
-    original_pattern_for_echo = " ".join(args).strip()
-    pattern = original_pattern_for_echo
+    pattern = " ".join(args).strip()
     if not pattern:
         await message.reply_text("Необходимо указать ключевые слова.")
         return
 
     await message.reply_text(
-        f"Ищу по запросу: {pattern}\n"
-        "Это может занять некоторое время…"
+        f"⌛ Ищу: {pattern}\n"
     )
 
     matches, truncated = await asyncio.to_thread(
