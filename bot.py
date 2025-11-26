@@ -1113,7 +1113,7 @@ async def check_inpx(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         args = args[:-1]
 
     if not args:
-        await message.reply_text("Использование: /find &lt;ключевые слова&gt;")
+        await message.reply_text("Использование: /find <ключевые слова>")
         return
 
     # Keep this string so we can show the user how to re-run with --all
@@ -1213,7 +1213,7 @@ async def pickfmt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     if not context.args:
         await message.reply_text(
-            "Использование: /get &lt;номер&gt; [формат]\n"
+            "Использование: /get <номер> [формат]\n"
             "Пример:\n"
             "  /get 1        – отправит оригинальный файл\n"
             "  /get 1 epub   – конвертирует первую книгу в EPUB\n"
@@ -1501,7 +1501,7 @@ async def compare_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         return
 
     if len(context.args) < 2:
-        await message.reply_text("Использование: /compare &lt;номер первой книги из поиска&gt; &lt;номер второй книги из поиска&gt;")
+        await message.reply_text("Использование: /compare <номер первой книги из поиска> <номер второй книги из поиска>")
         return
 
     try:
