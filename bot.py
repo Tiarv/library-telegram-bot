@@ -65,11 +65,15 @@ SEARCH_CACHE_LOCK = threading.Lock()
 
 MAX_MATCH_COLLECT = 9999
 MAX_MATCH_DISPLAY = 9999
+
 TELEGRAM_MAX_MESSAGE_LEN = 3900
-MAX_CAPTION_LEN = 1024 # 1024 hardcapped on telegram' side
+TELEGRAM_HARD_LIMIT = 4096
+
+MAX_CAPTION_LEN = 1024
+CAPTION_HARD_LIMIT = 1024
+
 CHECK_CONFIRM_THRESHOLD = 20
 SEARCH_RESULTS_MESSAGE_DELAY_SECONDS = 2.0
-TELEGRAM_HARD_LIMIT = 4096 # 4096 hardcapped on telegram' side
 
 SEPARATORS = ("\x04", "\t", ";", "|")
 
@@ -233,9 +237,21 @@ def load_config() -> None:
         else:
             TELEGRAM_MAX_MESSAGE_LEN = raw_msg_len
 
-        MAX_CAPTION_LEN = section.getint(
+        raw_caption_len = section.getint(
             "max_caption_len", fallback=MAX_CAPTION_LEN
         )
+        
+        if raw_caption_len > CAPTION_HARD_LIMIT:
+            logger.warning(
+                "max_caption_len=%d is above CAPTION_HARD_LIMIT=%d; "
+                "clamping to hard limit.",
+                raw_caption_len,
+                CAPTION_HARD_LIMIT,
+            )
+            MAX_CAPTION_LEN = CAPTION_HARD_LIMIT
+        else:
+            MAX_CAPTION_LEN = raw_caption_len
+
         CHECK_CONFIRM_THRESHOLD = section.getint(
             "check_confirm_threshold", fallback=CHECK_CONFIRM_THRESHOLD
         )
@@ -245,7 +261,6 @@ def load_config() -> None:
         )
     except ValueError as e:
         raise RuntimeError(f"Invalid numeric value in [bot] section: {e}") from e
-
     
     logger.info(
         "Config loaded: %d allowed users, %d INPX files",
@@ -1581,7 +1596,7 @@ async def export_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     if meta and isinstance(meta, dict):
         generated_at = meta.get("generated_at")
 
-    header_msg = f"Sending catalog export in {total_parts} part(s)."
+    header_msg = f"Отправляю каталог в {total_parts} частях."
     if generated_at:
         header_msg += f"\nGenerated at: {generated_at}"
     await message.reply_text(header_msg)
