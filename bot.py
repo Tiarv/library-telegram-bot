@@ -214,9 +214,22 @@ def load_config() -> None:
         MAX_MATCH_DISPLAY = section.getint(
             "max_match_display", fallback=MAX_MATCH_DISPLAY
         )
-        TELEGRAM_MAX_MESSAGE_LEN = section.getint(
+
+        raw_msg_len = section.getint(
             "telegram_max_message_len", fallback=TELEGRAM_MAX_MESSAGE_LEN
         )
+        # Guardrail: never let this exceed Telegram's hard limit
+        if raw_msg_len > TELEGRAM_HARD_LIMIT:
+            logger.warning(
+                "telegram_max_message_len=%d is above TELEGRAM_HARD_LIMIT=%d; "
+                "clamping to hard limit.",
+                raw_msg_len,
+                TELEGRAM_HARD_LIMIT,
+            )
+            TELEGRAM_MAX_MESSAGE_LEN = TELEGRAM_HARD_LIMIT
+        else:
+            TELEGRAM_MAX_MESSAGE_LEN = raw_msg_len
+
         MAX_CAPTION_LEN = section.getint(
             "max_caption_len", fallback=MAX_CAPTION_LEN
         )
@@ -228,9 +241,9 @@ def load_config() -> None:
             fallback=SEARCH_RESULTS_MESSAGE_DELAY_SECONDS,
         )
     except ValueError as e:
-        # Bad value in config (non-numeric, negative, etc.)
         raise RuntimeError(f"Invalid numeric value in [bot] section: {e}") from e
 
+    
     logger.info(
         "Config loaded: %d allowed users, %d INPX files",
         len(ALLOWED_USER_IDS),
