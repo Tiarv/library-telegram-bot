@@ -433,10 +433,8 @@ def resolve_container_path(inpx_path: str, relpath: str) -> str | None:
 
     candidates: list[str] = []
 
-    # Same directory as INPX
     candidates.append(os.path.abspath(os.path.join(inpx_dir, relpath_clean)))
 
-    # One level above
     if parent_dir and parent_dir != inpx_dir:
         candidates.append(os.path.abspath(os.path.join(parent_dir, relpath_clean)))
 
@@ -478,7 +476,6 @@ def search_in_inpx_records(pattern: str, max_collect: int = 100):
     negative_needles: list[str] = []
 
     for tok in tokens:
-        # tokens starting with '-' are treated as NOT filters
         if tok.startswith("-") and len(tok) > 1:
             negative_needles.append(tok[1:])
         else:
@@ -915,22 +912,17 @@ async def unknown_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     if message is None or not message.text:
         return
 
-    # First token is the command (e.g. "/find@MyBot", "/foo")
     cmd_token = message.text.strip().split()[0]
     if not cmd_token.startswith("/"):
-        # Not a command, ignore
         return
 
-    # Strip leading '/' and optional @botname
     cmd = cmd_token[1:]
     if "@" in cmd:
         cmd = cmd.split("@", 1)[0]
 
-    # If this is one of our known commands, do nothing
     if cmd in KNOWN_COMMANDS:
         return
 
-    # Otherwise, treat as an unknown command and show help
     await help_cmd(update, context)
     
 
@@ -953,9 +945,7 @@ async def send_matches_list(
         await message.reply_text("not found")
         return
 
-    # Build list lines, trimming any single line that is too huge
     lines: list[str] = []
-    # leave some margin per line so that one monster record does not explode a message
     max_line_len = max(100, TELEGRAM_MAX_MESSAGE_LEN - 200)
 
     for idx, rec in enumerate(matches[:MAX_MATCH_DISPLAY], start=1):
@@ -963,14 +953,11 @@ async def send_matches_list(
         title = rec.get("title") or "<?>"
         ext = rec.get("ext") or "<?>"
 
-        # Base text without extension link
         base_plain = f"{idx}) {author} — {title}"
 
         if len(base_plain) > max_line_len:
-            # hard-trim the line; user still sees the beginning + ellipsis
             base_plain = base_plain[: max_line_len - 1] + "…"
 
-        # Make the extension the clickable part if we know bot username
         if BOT_USERNAME and ext != "<?>":
             deeplink = f"https://t.me/{BOT_USERNAME}?start=get_{idx}"
             line_html = (
@@ -978,7 +965,6 @@ async def send_matches_list(
                 f"[<a href=\"{html.escape(deeplink)}\">{html.escape(ext)}</a>]"
             )
         else:
-            # Fallback: no username yet or unknown ext – plain text
             line_html = f"{html.escape(base_plain)} [{html.escape(ext)}]"
 
         lines.append(line_html)
@@ -1000,7 +986,6 @@ async def send_matches_list(
         candidate = current + line + "\n"
 
         if len(candidate) > TELEGRAM_MAX_MESSAGE_LEN and current.strip():
-            # Flush current chunk
             text_to_send = current if first_chunk else cont_prefix + current
 
             # Hard safety: never send more than Telegram allows
@@ -1019,7 +1004,6 @@ async def send_matches_list(
         else:
             current = candidate
 
-    # Flush remaining buffer
     if current.strip():
         text_to_send = current if first_chunk else cont_prefix + current
 
@@ -1088,7 +1072,6 @@ async def check_inpx(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     if message is None:
         return
 
-    # Args from /find command or from plain text message
     if context.args:
         args = list(context.args)
     else:
@@ -1103,10 +1086,8 @@ async def check_inpx(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         )
         return
 
-    # Before we strip +all/--all, remember the raw query if you ever need it
     raw_pattern = " ".join(args).strip()
 
-    # Detect optional --all / +all at the end
     show_all = False
     if args and args[-1].lower() in ("--all", "+all"):
         show_all = True
@@ -1116,7 +1097,6 @@ async def check_inpx(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         await message.reply_text("Использование: /find <ключевые слова>")
         return
 
-    # Keep this string so we can show the user how to re-run with --all
     original_pattern_for_echo = " ".join(args).strip()
     pattern = original_pattern_for_echo
     if not pattern:
@@ -1128,7 +1108,6 @@ async def check_inpx(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         "Это может занять некоторое время…"
     )
 
-    # Run heavy search in a thread, but with persistent cache
     matches, truncated = await asyncio.to_thread(
         run_search_with_persistent_cache,
         pattern,
@@ -1139,16 +1118,13 @@ async def check_inpx(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         await message.reply_text("не найдено")
         return
 
-    # Collapse truly identical records and sort for nicer display
     matches = dedupe_and_sort_matches(matches)
     total_matches = len(matches)
 
-    # Cache results per chat+user (for /get and "Show all results" callback)
     key = _cache_key_from_update(update)
     if key is not None:
         MATCH_CACHE[key] = matches
 
-    # If many results and no explicit +all, ask for confirmation
     if total_matches > CHECK_CONFIRM_THRESHOLD and not show_all:
         header_lines = [
             f"Найдено {total_matches} подходящих записей. "
@@ -1172,7 +1148,6 @@ async def check_inpx(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         )
         return
 
-    # One or more matches: show list, no file yet
     await send_matches_list(
         message=message,
         matches=matches,
@@ -1265,7 +1240,6 @@ async def pickfmt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         send_original = True
 
     if send_original:
-        # Behave like /pick: extract and send original file
         tmp_book_path, send_name = await asyncio.to_thread(
             extract_book_for_match,
             match,
@@ -1371,7 +1345,6 @@ async def get_from_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
     match = matches[index - 1]
 
-    # Send original file (equivalent to `/get N` without format)
     tmp_book_path, send_name = await asyncio.to_thread(
         extract_book_for_match,
         match,
@@ -1602,7 +1575,6 @@ async def compare_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         header_lines.append("")
         text = "\n".join(header_lines + diff_lines)
 
-    # Very unlikely this hits Telegram limits, but be safe:
     if len(text) > TELEGRAM_MAX_MESSAGE_LEN:
         chunks = [
             text[i : i + TELEGRAM_MAX_MESSAGE_LEN]
@@ -1635,7 +1607,6 @@ async def export_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         )
         return
 
-    # Try to load metadata to get generated_at and part names
     meta = None
     try:
         if os.path.isfile(CATALOG_META_PATH):
@@ -1645,7 +1616,6 @@ async def export_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     except Exception as e:
         logger.warning("Failed to load catalog metadata in bot: %s", e)
 
-    # List all catalog-part*.csv.zip in cache
     all_files = sorted(
         name
         for name in os.listdir(CACHE_DIR)
@@ -1669,7 +1639,6 @@ async def export_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         header_msg += f"\nGenerated at: {generated_at}"
     await message.reply_text(header_msg)
 
-    # Send each part as a separate document
     for idx, name in enumerate(all_files, start=1):
         path = os.path.join(CACHE_DIR, name)
         try:
