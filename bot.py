@@ -1759,6 +1759,7 @@ def main() -> None:
             show_all_results_callback,
             pattern="^show_all_results$",
             block=False,
+            filters=allowed_users_filter,
         )
     )
     # Log every update (allowed and unauthorized users)
@@ -1784,6 +1785,7 @@ def main() -> None:
             get_from_callback,
             pattern=r"^get:\d+$",
             block=False,
+            filters=allowed_users_filter,
         ),
     )
     
