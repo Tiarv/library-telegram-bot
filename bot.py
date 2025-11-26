@@ -50,7 +50,7 @@ BOT_USERNAME: str | None = None
 # Cache of last search results per (chat_id, user_id)
 # key: (chat_id, user_id) -> list of match dicts
 MATCH_CACHE: dict[tuple[int, int], list[dict]] = {}
-INPX_FIELD_NAMES_CACHE: dict[str, list[str]] = {}
+INPX_FIELD_NAMES_CACHE: dict[str, list[str] | None] = {}
 INPX_FIELD_NAMES_CACHE_LOCK = threading.Lock()
 
 CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cache")
