@@ -33,15 +33,10 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 
 KNOWN_COMMANDS = {
     "start",
-    # search / lookup aliases
     "lookup", "look", "search", "find", "l", "s", "f",
-    # pick/get aliases
     "pick", "get", "p", "g",
-    # info
     "info",
-    # compare
     "compare",
-    # export / catalog / dump aliases
     "export", "catalog", "dump",
 }
 
