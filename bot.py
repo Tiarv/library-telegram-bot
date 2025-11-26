@@ -1131,14 +1131,6 @@ async def show_all_results_callback(
 
 
 async def pickfmt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    /pickfmt <n> [format] or /pf <n> [format] –
-    send the n-th result from the last /checkinpx search.
-
-    - If format is omitted: send original file (like /pick).
-    - If format equals the original extension: send original file.
-    - Otherwise: convert via ebook-convert to the requested format.
-    """
     message = update.effective_message
     if message is None:
         return
@@ -1780,14 +1772,14 @@ def main() -> None:
             check_inpx,
         ),
     )
-    application.add_handler(
-        CallbackQueryHandler(
-            get_from_callback,
-            pattern=r"^get:\d+$",
-            block=False,
-            filters=allowed_users_filter,
-        ),
-    )
+    #application.add_handler(
+    #    CallbackQueryHandler(
+    #        get_from_callback,
+    #        pattern=r"^get:\d+$",
+    #        block=False,
+    #        filters=allowed_users_filter,
+    #    ),
+    #)
     
     application.add_error_handler(error_handler)
 
