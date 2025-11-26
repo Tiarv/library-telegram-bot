@@ -1004,6 +1004,12 @@ async def show_all_results_callback(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> None:
     query = update.callback_query
+    user = query.from_user if query else None
+    if not user or user.id not in ALLOWED_USER_IDS:
+        if query:
+            await query.answer("Нет доступа", show_alert=True)
+        return
+
     await query.answer()
 
     key = _cache_key_from_update(update)
@@ -1016,14 +1022,7 @@ async def show_all_results_callback(
         await query.message.reply_text("Результаты поиска недоступны. Повторите поиск еще раз.")
         return
 
-    # We don't know if the original search was truncated; assume False here.
-    # If you store `truncated` per key as well, you can pass the real value.
-    await send_matches_list(
-        message=query.message,
-        matches=matches,
-        truncated=False,
-        header_prefix="Все совпадения",
-    )
+    await send_matches_list(query.message, matches, query_offset=0)
 
 
 async def pickfmt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1647,7 +1646,6 @@ def main() -> None:
             show_all_results_callback,
             pattern="^show_all_results$",
             block=False,
-            filters=allowed_users_filter,
         )
     )
     # Log every update (allowed and unauthorized users)
@@ -1668,14 +1666,6 @@ def main() -> None:
             check_inpx,
         ),
     )
-    #application.add_handler(
-    #    CallbackQueryHandler(
-    #        get_from_callback,
-    #        pattern=r"^get:\d+$",
-    #        block=False,
-    #        filters=allowed_users_filter,
-    #    ),
-    #)
     
     application.add_error_handler(error_handler)
 
