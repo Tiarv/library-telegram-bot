@@ -1022,7 +1022,7 @@ async def show_all_results_callback(
         await query.message.reply_text("Результаты поиска недоступны. Повторите поиск еще раз.")
         return
 
-    await send_matches_list(query.message, matches, query_offset=0)
+    await send_matches_list(query.message, matches, truncated=False, header_prefix="Все совпадения")
 
 
 async def pickfmt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
