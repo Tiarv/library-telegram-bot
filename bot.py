@@ -475,6 +475,20 @@ def search_in_inpx_records(pattern: str, max_collect: int = 100):
       "lem epub"       -> line must contain "lem" AND "epub"
       "lem epub -fb2"  -> line must contain "lem" AND "epub"
                           and must NOT contain "fb2".
+
+    Deletion logic:
+
+      1) If structure.info is available:
+           - find field named DEL (case-insensitive);
+           - if that field == "1" → record is treated as deleted and skipped.
+
+      2) If structure.info is NOT available:
+           - try field #9 (1-based; index 8). If it exists and equals "1":
+               • parse record, resolve container_relpath → file path;
+               • if the file does NOT exist → treat as deleted and skip.
+           - otherwise, try the last field:
+               • if it equals "1", do the same file-existence check.
+           - only skip if flag == "1" *and* the book file cannot be resolved.
     """
     matches: list[dict] = []
     truncated = False
@@ -493,21 +507,21 @@ def search_in_inpx_records(pattern: str, max_collect: int = 100):
     negative_needles: list[str] = []
 
     for tok in tokens:
+        # tokens starting with '-' are treated as NOT filters
         if tok.startswith("-") and len(tok) > 1:
             negative_needles.append(tok[1:])
         else:
             positive_needles.append(tok)
 
-
     for inpx_path in INPX_FILES:
         inpx_path = inpx_path.strip()
         if not inpx_path:
             continue
-
         if not os.path.isfile(inpx_path):
             logger.warning("INPX file not found: %s", inpx_path)
             continue
 
+        # Try to discover DEL field index from structure.info
         del_index: int | None = None
         field_names = _read_inpx_field_names(inpx_path)
         if field_names:
@@ -534,24 +548,81 @@ def search_in_inpx_records(pattern: str, max_collect: int = 100):
                                 line_cf = line.casefold()
 
                                 # AND filter: all positive needles must be present
-                                if positive_needles and not all(n in line_cf for n in positive_needles):
+                                if positive_needles and not all(
+                                    n in line_cf for n in positive_needles
+                                ):
                                     continue
 
                                 # NOT filter: none of the negative needles may be present
-                                if negative_needles and any(n in line_cf for n in negative_needles):
+                                if negative_needles and any(
+                                    n in line_cf for n in negative_needles
+                                ):
                                     continue
 
-                                # NEW: skip logically deleted records (DEL == "1")
+                                # --- Deletion handling ---
+
+                                parsed_for_check: dict | None = None
+
                                 if del_index is not None:
-                                    _, parts = split_record(line_stripped)
+                                    # "Official" DEL field from structure.info
+                                    sep, parts = split_record(line_stripped)
                                     if parts is None:
                                         continue
-                                    if len(parts) > del_index and parts[del_index].strip() == "1":
-                                        # This record is marked as deleted – hide it from search
+                                    if (
+                                        len(parts) > del_index
+                                        and parts[del_index].strip() == "1"
+                                    ):
+                                        # Logically deleted according to catalog – skip outright
+                                        continue
+                                else:
+                                    # Heuristic fallback: field #9 and/or last field
+                                    sep, parts = split_record(line_stripped)
+                                    if parts is None:
                                         continue
 
-                                parsed = parse_inpx_record(line)
+                                    candidate_idx: int | None = None
+
+                                    # 1-based field 9 -> index 8
+                                    CANDIDATE_9TH = 8
+                                    if len(parts) > CANDIDATE_9TH and parts[
+                                        CANDIDATE_9TH
+                                    ].strip() == "1":
+                                        candidate_idx = CANDIDATE_9TH
+                                    else:
+                                        # If 9th is not "1" (or doesn't exist), try last field
+                                        last_idx = len(parts) - 1
+                                        if (
+                                            last_idx >= 0
+                                            and parts[last_idx].strip() == "1"
+                                        ):
+                                            candidate_idx = last_idx
+
+                                    if candidate_idx is not None:
+                                        # We saw a "1" in a candidate DEL field – verify by checking file existence
+                                        parsed_for_check = parse_inpx_record(line)
+                                        if not parsed_for_check:
+                                            # Malformed record where "DEL?" == 1 – treat as deleted
+                                            continue
+
+                                        container_relpath = parsed_for_check[
+                                            "container_relpath"
+                                        ]
+                                        container_abs = resolve_container_path(
+                                            inpx_path, container_relpath
+                                        )
+
+                                        if not container_abs:
+                                            # Flag is 1 and book file cannot be found – treat as deleted
+                                            continue
+                                        # If the file exists, we keep the record (ignore flag)
+
+                                # --- Normal parse / add to results ---
+
+                                parsed = parsed_for_check or parse_inpx_record(line)
                                 if not parsed:
+                                    # you can keep this quiet if it’s too chatty
+                                    # logger.warning("Could not parse INPX record in %s -> %s",
+                                    #                inpx_path, index_inner_name)
                                     continue
 
                                 record = {
