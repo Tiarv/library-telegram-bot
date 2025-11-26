@@ -1043,30 +1043,27 @@ async def send_matches_list(
 
 def dedupe_and_sort_matches(matches: list[dict]) -> list[dict]:
     """
-    Collapse only *truly identical* records:
-    - same INPX file
-    - same index file inside INPX
-    - same full list of fields
+    Collapse INPX records that are effectively identical in terms of their raw
+    INPX fields.
 
-    Records that differ in any of those stay separate.
+    Two records are considered duplicates if their `fields` list is identical.
+    External metadata (such as which INPX file they came from, index_inner_name,
+    container path, etc.) is ignored for the purpose of deduplication.
 
-    Then sort results to make similar items cluster together.
+    The first occurrence is kept, later duplicates are dropped.
+
+    The resulting list is then sorted to make similar items cluster together.
     """
-    by_key: dict[tuple, dict] = {}
+    by_fields: dict[tuple, dict] = {}
 
     for rec in matches:
-        fields = tuple(rec.get("fields") or [])
-        key = (
-            rec.get("inpx_path"),
-            rec.get("index_inner_name"),
-            fields,
-        )
-        if key in by_key:
-            # exact duplicate of a record we've already seen in the same INPX/index
+        fields_tuple = tuple(rec.get("fields") or [])
+        # If we've already seen this exact INPX record (same fields), skip it
+        if fields_tuple in by_fields:
             continue
-        by_key[key] = rec
+        by_fields[fields_tuple] = rec
 
-    deduped = list(by_key.values())
+    deduped = list(by_fields.values())
 
     # Sort for nicer UX: author → title → ext → container path → INPX name → lib_id
     def sort_key(r: dict) -> tuple:
