@@ -276,16 +276,21 @@ def _read_inpx_field_names(inpx_path: str) -> list[str] | None:
     Try to read structure.info from the given INPX archive and return
     a list of field names (in order). Returns None if not present or
     cannot be parsed.
+
+    This version:
+      * finds structure.info anywhere in the ZIP (not just at root),
+      * supports several common separators (;, |, tab, comma, ^D),
+      * skips empty / comment lines and preserves original field names.
     """
     # Fast path: cached?
-    with INPX_FIELD_NAMES_CACHE_LOCK:
-        if inpx_path in INPX_FIELD_NAMES_CACHE:
-            return INPX_FIELD_NAMES_CACHE[inpx_path]
+    if inpx_path in INPX_FIELD_NAMES_CACHE:
+        return INPX_FIELD_NAMES_CACHE[inpx_path]
 
     names: list[str] | None = None
 
     try:
         with zipfile.ZipFile(inpx_path, "r") as zf:
+            # structure.info might be at root or in some subdir; pick first match
             struct_name: str | None = None
             for name in zf.namelist():
                 if name.lower().endswith("structure.info"):
@@ -293,63 +298,72 @@ def _read_inpx_field_names(inpx_path: str) -> list[str] | None:
                     break
 
             if not struct_name:
-                names = None
-            else:
-                try:
-                    raw = zf.read(struct_name)
-                except Exception as e:
-                    logger.warning(
-                        "Failed to read structure.info from %s: %s",
-                        inpx_path,
-                        e,
-                    )
-                    names = None
-                else:
-                    text: str | None = None
-                    for enc in ("utf-8", "cp1251"):
-                        try:
-                            text = raw.decode(enc)
-                            break
-                        except UnicodeDecodeError:
-                            continue
+                INPX_FIELD_NAMES_CACHE[inpx_path] = None
+                return None
 
-                    if text is None:
-                        logger.warning(
-                            "Failed to decode structure.info in %s as utf-8 or cp1251",
-                            inpx_path,
-                        )
-                        names = None
-                    else:
-                        header_line: str | None = None
-                        for line in text.splitlines():
-                            line = line.strip()
-                            if not line:
-                                continue
-                            if line.startswith("#") or line.startswith(";") or line.startswith("//"):
-                                continue
-                            header_line = line
-                            break
+            try:
+                raw = zf.read(struct_name)
+            except Exception as e:
+                logger.warning(
+                    "Failed to read structure.info from %s: %s",
+                    inpx_path,
+                    e,
+                )
+                INPX_FIELD_NAMES_CACHE[inpx_path] = None
+                return None
 
-                        if not header_line:
-                            names = None
-                        else:
-                            sep: str | None = None
-                            for candidate in ("\x04", ";", "|", "\t", ","):
-                                if candidate in header_line:
-                                    sep = candidate
-                                    break
+        # Try UTF-8 first, fall back to cp1251 (common for Russian INPX files)
+        text: str | None = None
+        for enc in ("utf-8", "cp1251"):
+            try:
+                text = raw.decode(enc)
+                break
+            except UnicodeDecodeError:
+                continue
 
-                            if not sep:
-                                names = None
-                            else:
-                                parts_raw = [p.strip() for p in header_line.split(sep)]
-                                if not any(parts_raw):
-                                    names = None
-                                else:
-                                    names = [
-                                        p if p else f"Field {i + 1}"
-                                        for i, p in enumerate(parts_raw)
-                                    ]
+        if text is None:
+            logger.warning(
+                "Failed to decode structure.info in %s as utf-8 or cp1251",
+                inpx_path,
+            )
+            INPX_FIELD_NAMES_CACHE[inpx_path] = None
+            return None
+
+        # Take the first non-empty, non-comment line as the header
+        header_line: str | None = None
+        for line in text.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            # Treat typical comment styles as comments
+            if line.startswith("#") or line.startswith(";") or line.startswith("//"):
+                continue
+            header_line = line
+            break
+
+        if not header_line:
+            INPX_FIELD_NAMES_CACHE[inpx_path] = None
+            return None
+
+        # Detect separator in header_line
+        sep: str | None = None
+        for candidate in ("\x04", ";", "|", "\t", ","):
+            if candidate in header_line:
+                sep = candidate
+                break
+
+        if not sep:
+            INPX_FIELD_NAMES_CACHE[inpx_path] = None
+            return None
+
+        # Preserve original casing but strip whitespace
+        parts_raw = [p.strip() for p in header_line.split(sep)]
+        if not any(parts_raw):
+            INPX_FIELD_NAMES_CACHE[inpx_path] = None
+            return None
+
+        # Replace completely empty labels with generic "Field N"
+        names = [p if p else f"Field {i + 1}" for i, p in enumerate(parts_raw)]
 
     except Exception as e:
         logger.warning(
@@ -357,14 +371,9 @@ def _read_inpx_field_names(inpx_path: str) -> list[str] | None:
             inpx_path,
             e,
         )
-        names = None
 
-    # Store result under lock (including None for "no structure.info")
-    with INPX_FIELD_NAMES_CACHE_LOCK:
-        INPX_FIELD_NAMES_CACHE[inpx_path] = names
-
+    INPX_FIELD_NAMES_CACHE[inpx_path] = names
     return names
-
 
 
 def parse_inpx_record(line: str) -> dict | None:
