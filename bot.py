@@ -49,7 +49,6 @@ BOT_USERNAME: str | None = None
 # Cache of last search results per (chat_id, user_id)
 # key: (chat_id, user_id) -> list of match dicts
 MATCH_CACHE: dict[tuple[int, int], list[dict]] = {}
-INPX_SCHEMA_CACHE: dict[str, dict[str, int]] = {}
 INPX_FIELD_NAMES_CACHE: dict[str, list[str]] = {}
 
 CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cache")
@@ -1311,62 +1310,6 @@ async def pickfmt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             pass
 
 
-async def get_from_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    query = update.callback_query
-    await query.answer()
-    message = query.message
-    if message is None:
-        return
-
-    data = query.data or ""
-    try:
-        _, idx_str = data.split(":", 1)
-        index = int(idx_str)
-    except (ValueError, IndexError):
-        await message.reply_text("Неправильный номер записи.")
-        return
-
-    key = _cache_key_from_update(update)
-    if key is None or key not in MATCH_CACHE:
-        await message.reply_text("Результаты поиска недоступны. Повторите поиск еще раз.")
-        return
-
-    matches = MATCH_CACHE[key]
-    if not 1 <= index <= len(matches):
-        await message.reply_text(
-            f"Поиск не содержит результата с таким номером: всего было найдено {len(matches)} книг"
-        )
-        return
-
-    match = matches[index - 1]
-
-    tmp_book_path, send_name = await asyncio.to_thread(
-        extract_book_for_match,
-        match,
-    )
-
-    if not tmp_book_path:
-        await message.reply_text(
-            "Запись была найдена, но книгу не получилось извлечь. Запросите другую книгу."
-        )
-        return
-
-    try:
-        with open(tmp_book_path, "rb") as f:
-            await message.reply_document(
-                document=f,
-                filename=send_name,
-                disable_content_type_detection=True,
-            )
-    except Exception:
-        await message.reply_text("Книгу не удалось отправить :(")
-    finally:
-        try:
-            os.remove(tmp_book_path)
-        except OSError:
-            pass
-
-
 async def info_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
     /info <n> – show all INPX fields for the n-th result from the last search
@@ -1606,7 +1549,6 @@ async def export_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     try:
         if os.path.isfile(CATALOG_META_PATH):
             with open(CATALOG_META_PATH, "r", encoding="utf-8") as f:
-                import json
                 meta = json.load(f)
     except Exception as e:
         logger.warning("Failed to load catalog metadata in bot: %s", e)
