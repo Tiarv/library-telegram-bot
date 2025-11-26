@@ -984,6 +984,11 @@ async def check_inpx(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         await message.reply_text("Необходимо указать ключевые слова.")
         return
 
+    await message.reply_text(
+        f"Ищу по запросу: {pattern}\n"
+        "Это может занять некоторое время…"
+    )
+
     # Run heavy search in a thread
     matches, truncated = await asyncio.to_thread(
         search_in_inpx_records,
