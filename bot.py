@@ -810,30 +810,25 @@ async def send_matches_list(
         title = rec.get("title") or "<?>"
         ext = rec.get("ext") or "<?>"
 
-        # Plain line for length checks / trimming
-        plain = f"{idx}) {author} — {title} {ext}"
+        # Base text without extension link
+        base_plain = f"{idx}) {author} — {title}"
 
-        if len(plain) > max_line_len:
-            plain = plain[: max_line_len - 1] + "…"
+        if len(base_plain) > max_line_len:
+            # hard-trim the line; user still sees the beginning + ellipsis
+            base_plain = base_plain[: max_line_len - 1] + "…"
 
-        # Turn leading index into a clickable deep link if we know BOT_USERNAME
-        if BOT_USERNAME:
+        # Make the extension the clickable part if we know bot username
+        if BOT_USERNAME and ext != "<?>":
             deeplink = f"https://t.me/{BOT_USERNAME}?start=get_{idx}"
-            prefix = f"{idx})"
-            if plain.startswith(prefix):
-                rest = plain[len(prefix) :]  # keep the rest as-is
-                line = (
-                    f'<a href="{html.escape(deeplink)}">#{idx}</a>'
-                    f"{html.escape(rest)}"
-                )
-            else:
-                # Fallback: just escape the whole line
-                line = html.escape(plain)
+            line_html = (
+                f"{html.escape(base_plain)} "
+                f"[<a href=\"{html.escape(deeplink)}\">{html.escape(ext)}</a>]"
+            )
         else:
-            # No username yet – just escape the plain line
-            line = html.escape(plain)
+            # Fallback: no username yet or unknown ext – plain text
+            line_html = f"{html.escape(base_plain)} [{html.escape(ext)}]"
 
-        lines.append(line)
+        lines.append(line_html)
 
     shown = min(total_matches, MAX_MATCH_DISPLAY)
 
@@ -846,7 +841,6 @@ async def send_matches_list(
 
     first_chunk = True
     current = header
-
     cont_prefix = html.escape("…продолжение…") + "\n\n"
 
     for line in lines:
