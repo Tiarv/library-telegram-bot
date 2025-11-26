@@ -486,6 +486,14 @@ def search_in_inpx_records(pattern: str, max_collect: int = 100):
             logger.warning("INPX file not found: %s", inpx_path)
             continue
 
+        del_index: int | None = None
+        field_names = _read_inpx_field_names(inpx_path)
+        if field_names:
+            for i, name in enumerate(field_names):
+                if name.strip().upper() == "DEL":
+                    del_index = i
+                    break
+
         try:
             with zipfile.ZipFile(inpx_path, "r") as zf:
                 for index_inner_name in zf.namelist():
@@ -511,11 +519,17 @@ def search_in_inpx_records(pattern: str, max_collect: int = 100):
                                 if negative_needles and any(n in line_cf for n in negative_needles):
                                     continue
 
+                                # NEW: skip logically deleted records (DEL == "1")
+                                if del_index is not None:
+                                    _, parts = split_record(line_stripped)
+                                    if parts is None:
+                                        continue
+                                    if len(parts) > del_index and parts[del_index].strip() == "1":
+                                        # This record is marked as deleted – hide it from search
+                                        continue
+
                                 parsed = parse_inpx_record(line)
                                 if not parsed:
-                                    # you can keep this quiet if it’s too chatty
-                                    # logger.warning("Could not parse INPX record in %s -> %s",
-                                    #                inpx_path, index_inner_name)
                                     continue
 
                                 record = {
