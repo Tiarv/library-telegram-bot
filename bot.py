@@ -10,6 +10,7 @@ import subprocess
 import html
 import json
 import hashlib
+import threading
 
 from telegram.error import TelegramError
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand
@@ -50,6 +51,7 @@ BOT_USERNAME: str | None = None
 # key: (chat_id, user_id) -> list of match dicts
 MATCH_CACHE: dict[tuple[int, int], list[dict]] = {}
 INPX_FIELD_NAMES_CACHE: dict[str, list[str]] = {}
+INPX_FIELD_NAMES_CACHE_LOCK = threading.Lock()
 
 CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cache")
 CATALOG_META_PATH = os.path.join(CACHE_DIR, "catalog_meta.json")
@@ -59,6 +61,7 @@ SEARCH_CACHE_PATH = os.path.join(CACHE_DIR, "search_cache.json")
 # Global search cache: shared between all chats, keyed by (normalized pattern, max_matches)
 SEARCH_CACHE: dict[str, dict] = {}
 SEARCH_CACHE_GENERATION: str | None = None
+SEARCH_CACHE_LOCK = threading.Lock()
 
 MAX_MATCH_COLLECT = 9999
 MAX_MATCH_DISPLAY = 9999
@@ -670,32 +673,39 @@ def run_search_with_persistent_cache(
     """
     global SEARCH_CACHE, SEARCH_CACHE_GENERATION
 
-    current_gen = _get_catalog_generation_for_search_cache()
-
-    # If generation changed (or first use), reload from disk
-    if SEARCH_CACHE_GENERATION != current_gen:
-        _load_search_cache_from_disk(current_gen)
-
     cache_key = _search_cache_key(pattern, max_matches)
 
-    entry = SEARCH_CACHE.get(cache_key)
-    if isinstance(entry, dict):
-        matches = entry.get("matches")
-        truncated = bool(entry.get("truncated", False))
-        if isinstance(matches, list):
-            return matches, truncated
+    # --- fast path: generation check + cache lookup under lock ---
+    with SEARCH_CACHE_LOCK:
+        current_gen = _get_catalog_generation_for_search_cache()
 
-    # Cache miss: run real search
+        if SEARCH_CACHE_GENERATION != current_gen:
+            _load_search_cache_from_disk(current_gen)
+
+        entry = SEARCH_CACHE.get(cache_key)
+        if isinstance(entry, dict):
+            matches = entry.get("matches")
+            truncated = bool(entry.get("truncated", False))
+            if isinstance(matches, list):
+                return matches, truncated
+
+    # --- cache miss: run real search WITHOUT holding the lock ---
     matches, truncated = search_in_inpx_records(pattern, max_matches)
 
-    # Store in cache (we keep raw matches; dedupe happens in the caller as before)
-    SEARCH_CACHE[cache_key] = {
-        "pattern": pattern,
-        "matches": matches,
-        "truncated": truncated,
-    }
-    SEARCH_CACHE_GENERATION = current_gen
-    _save_search_cache_to_disk()
+    # --- store result back under lock ---
+    with SEARCH_CACHE_LOCK:
+        # Generation might have changed while we were searching; re-check
+        current_gen2 = _get_catalog_generation_for_search_cache()
+        if SEARCH_CACHE_GENERATION != current_gen2:
+            _load_search_cache_from_disk(current_gen2)
+
+        SEARCH_CACHE[cache_key] = {
+            "pattern": pattern,
+            "matches": matches,
+            "truncated": truncated,
+        }
+        SEARCH_CACHE_GENERATION = current_gen2
+        _save_search_cache_to_disk()
 
     return matches, truncated
 
