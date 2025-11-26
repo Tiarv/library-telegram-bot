@@ -1043,29 +1043,58 @@ async def send_matches_list(
 
 def dedupe_and_sort_matches(matches: list[dict]) -> list[dict]:
     """
-    Collapse INPX records that are effectively identical in terms of their raw
-    INPX fields.
+    Collapse duplicates and sort for nicer display.
 
-    Two records are considered duplicates if their `fields` list is identical.
-    External metadata (such as which INPX file they came from, index_inner_name,
-    container path, etc.) is ignored for the purpose of deduplication.
+    Stage 1: collapse only *truly identical* records:
+      - same INPX file
+      - same index file inside INPX
+      - same full list of fields
 
-    The first occurrence is kept, later duplicates are dropped.
+    Stage 2: if multiple records effectively point to the same physical
+    book file (same FOLDER/its numeric analog + same LIBID/its numeric analog),
+    keep only the first one.
 
-    The resulting list is then sorted to make similar items cluster together.
+    Then sort results to make similar items cluster together.
     """
-    by_fields: dict[tuple, dict] = {}
+    # --- Stage 1: exact duplicates within the same INPX/index ---
+    by_key: dict[tuple, dict] = {}
 
     for rec in matches:
-        fields_tuple = tuple(rec.get("fields") or [])
-        # If we've already seen this exact INPX record (same fields), skip it
-        if fields_tuple in by_fields:
+        fields = tuple(rec.get("fields") or [])
+        key = (
+            rec.get("inpx_path"),
+            rec.get("index_inner_name"),
+            fields,
+        )
+        if key in by_key:
+            # exact duplicate of a record we've already seen in the same INPX/index
             continue
-        by_fields[fields_tuple] = rec
+        by_key[key] = rec
 
-    deduped = list(by_fields.values())
+    deduped = list(by_key.values())
 
-    # Sort for nicer UX: author → title → ext → container path → INPX name → lib_id
+    # --- Stage 2: duplicates by physical location (FOLDER + LIBID) ---
+    # FOLDER's analog: container_relpath
+    # LIBID's analog: lib_id
+    seen_physical: set[tuple[str, str]] = set()
+    deduped_physical: list[dict] = []
+
+    for rec in deduped:
+        folder = (rec.get("container_relpath") or "").strip()
+        lib_id = (rec.get("lib_id") or "").strip()
+
+        # Only consider as "same physical book" if we know BOTH
+        if folder and lib_id:
+            key2 = (folder.casefold(), lib_id.casefold())
+            if key2 in seen_physical:
+                # Another record that points to the same book file in the library structure
+                # -> drop it, keep only the first one we saw
+                continue
+            seen_physical.add(key2)
+
+        deduped_physical.append(rec)
+
+    # --- Final sort: author → title → ext → container path → INPX name → lib_id ---
     def sort_key(r: dict) -> tuple:
         author = (r.get("author") or "").casefold()
         title = (r.get("title") or "").casefold()
@@ -1075,8 +1104,8 @@ def dedupe_and_sort_matches(matches: list[dict]) -> list[dict]:
         lib_id = (r.get("lib_id") or "").casefold()
         return (author, title, ext, rel, inpx_name, lib_id)
 
-    deduped.sort(key=sort_key)
-    return deduped
+    deduped_physical.sort(key=sort_key)
+    return deduped_physical
 
 
 async def check_inpx(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
