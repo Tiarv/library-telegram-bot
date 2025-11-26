@@ -1706,7 +1706,9 @@ def main() -> None:
         .build()
     )
 
-    allowed_users_filter = filters.User(user_id=ALLOWED_USER_IDS)
+    # Only allow whitelisted users AND only in private chats
+    private_filter = filters.ChatType.PRIVATE
+    allowed_users_filter = filters.User(user_id=ALLOWED_USER_IDS) & private_filter
 
     application.add_handler(
         CommandHandler("start", start, filters=allowed_users_filter)
@@ -1745,11 +1747,13 @@ def main() -> None:
             block=False,
         )
     )
-    # Log every update (allowed and unauthorized users)
+
+    # Log every update
     application.add_handler(
         MessageHandler(filters.ALL, log_any_update),
         group=-1,
     )
+
     application.add_handler(
         MessageHandler(
             filters.COMMAND & allowed_users_filter,
@@ -1763,10 +1767,11 @@ def main() -> None:
             check_inpx,
         ),
     )
-    
+
     application.add_error_handler(error_handler)
 
     application.run_polling(drop_pending_updates=True)
+
 
 
 if __name__ == "__main__":
