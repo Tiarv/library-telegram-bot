@@ -384,6 +384,11 @@ def _read_inpx_field_names(inpx_path: str) -> list[str] | None:
     Try to read structure.info from the given INPX archive and return
     a list of field names (in order). Returns None if not present or
     cannot be parsed.
+
+    This version:
+      * finds structure.info anywhere in the ZIP (not just at root),
+      * supports several common separators (;, |, tab, comma, ^D),
+      * skips empty / comment lines and preserves original field names.
     """
     # Cached?
     if inpx_path in INPX_FIELD_NAMES_CACHE:
@@ -393,50 +398,84 @@ def _read_inpx_field_names(inpx_path: str) -> list[str] | None:
 
     try:
         with zipfile.ZipFile(inpx_path, "r") as zf:
-            # structure.info is the conventional name
-            if "structure.info" not in zf.namelist():
+            # structure.info might be at root or in some subdir; pick first match
+            struct_name: str | None = None
+            for name in zf.namelist():
+                if name.lower().endswith("structure.info"):
+                    struct_name = name
+                    break
+
+            if not struct_name:
                 INPX_FIELD_NAMES_CACHE[inpx_path] = None
                 return None
 
-            with zf.open("structure.info", "r") as f:
-                raw = f.read()
-
-        # Try UTF-8 first, fall back to cp1251 (common for Russian INPX files)
-        text: str
-        try:
-            text = raw.decode("utf-8")
-        except UnicodeDecodeError:
             try:
-                text = raw.decode("cp1251")
-            except UnicodeDecodeError:
+                raw = zf.read(struct_name)
+            except Exception as e:
                 logger.warning(
-                    "Failed to decode structure.info in %s as utf-8 or cp1251",
+                    "Failed to read structure.info from %s: %s",
                     inpx_path,
+                    e,
                 )
                 INPX_FIELD_NAMES_CACHE[inpx_path] = None
                 return None
 
-        # Find the first non-empty, non-comment line that looks like a structure
-        # (semicolon-separated field names)
+        # Try UTF-8 first, fall back to cp1251 (common for Russian INPX files)
+        text: str | None = None
+        for enc in ("utf-8", "cp1251"):
+            try:
+                text = raw.decode(enc)
+                break
+            except UnicodeDecodeError:
+                continue
+
+        if text is None:
+            logger.warning(
+                "Failed to decode structure.info in %s as utf-8 or cp1251",
+                inpx_path,
+            )
+            INPX_FIELD_NAMES_CACHE[inpx_path] = None
+            return None
+
+        # Take the first non-empty, non-comment line as the header
+        header_line: str | None = None
         for line in text.splitlines():
             line = line.strip()
             if not line:
                 continue
-            # Treat lines starting with # or ; as comments
-            if line.startswith("#") or line.startswith(";"):
+            # Treat typical comment styles as comments
+            if line.startswith("#") or line.startswith(";") or line.startswith("//"):
                 continue
-            if ";" not in line:
-                continue
+            header_line = line
+            break
 
-            # This is probably the structure line
-            parts = [p.strip() for p in line.split(";") if p.strip()]
-            if parts:
-                names = parts
+        if not header_line:
+            INPX_FIELD_NAMES_CACHE[inpx_path] = None
+            return None
+
+        # Detect separator in header_line (same candidates as load_inpx_schema)
+        sep: str | None = None
+        for candidate in ("\x04", ";", "|", "\t", ","):
+            if candidate in header_line:
+                sep = candidate
                 break
+
+        if not sep:
+            INPX_FIELD_NAMES_CACHE[inpx_path] = None
+            return None
+
+        # Preserve original casing but strip whitespace
+        parts_raw = [p.strip() for p in header_line.split(sep)]
+        if not any(parts_raw):
+            INPX_FIELD_NAMES_CACHE[inpx_path] = None
+            return None
+
+        # Replace completely empty labels with generic "Field N"
+        names = [p if p else f"Field {i + 1}" for i, p in enumerate(parts_raw)]
 
     except Exception as e:
         logger.warning(
-            "Failed to read structure.info from %s: %s",
+            "Failed to parse structure.info from %s: %s",
             inpx_path,
             e,
         )
