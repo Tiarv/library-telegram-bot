@@ -131,9 +131,11 @@ def build_safe_caption(prefix: str, match: dict) -> str:
 
     caption = f"{prefix}\n(author: {author}, title: {title}, ext: {ext})"
 
-    # Extra safety: if somehow still too long, drop title completely
     if len(caption) > MAX_CAPTION_LEN:
-        caption = f"{prefix}\n(ext: {ext})"
+        caption = f"{prefix}\n(title: {title}, ext: {ext})"
+
+        if len(caption) > MAX_CAPTION_LEN:
+            caption = f"{prefix}\n(ext: {ext})"
 
     return caption
 
