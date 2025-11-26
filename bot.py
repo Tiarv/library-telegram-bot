@@ -8,6 +8,8 @@ import asyncio
 import tempfile
 import subprocess
 import html
+import json
+import hashlib
 
 from telegram.error import TelegramError
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand
@@ -57,6 +59,12 @@ INPX_FIELD_NAMES_CACHE: dict[str, list[str]] = {}
 
 CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cache")
 CATALOG_META_PATH = os.path.join(CACHE_DIR, "catalog_meta.json")
+
+SEARCH_CACHE_PATH = os.path.join(CACHE_DIR, "search_cache.json")
+
+# Global search cache: shared between all chats, keyed by (normalized pattern, max_matches)
+SEARCH_CACHE: dict[str, dict] = {}
+SEARCH_CACHE_GENERATION: str | None = None
 
 MAX_MATCH_COLLECT = 9999
 MAX_MATCH_DISPLAY = 9999
@@ -557,6 +565,137 @@ def search_in_inpx_records(pattern: str, max_collect: int = 100):
     return matches, truncated
 
 
+def _get_catalog_generation_for_search_cache() -> str | None:
+    """
+    Read catalog_meta.json and return its 'generated_at' field as a string.
+    Used to invalidate the search cache when catalog changes.
+
+    If metadata is missing or unreadable, returns None.
+    """
+    try:
+        if os.path.isfile(CATALOG_META_PATH):
+            with open(CATALOG_META_PATH, "r", encoding="utf-8") as f:
+                meta = json.load(f)
+            if isinstance(meta, dict):
+                gen = meta.get("generated_at")
+                if gen is not None:
+                    return str(gen)
+    except Exception as e:
+        logger.warning("Failed to read catalog metadata for search cache: %s", e)
+    return None
+
+
+def _search_cache_key(pattern: str, max_matches: int) -> str:
+    """
+    Build a stable key for the search cache from pattern and limit.
+    We normalize whitespace and case, then hash it so keys are short.
+    """
+    normalized = " ".join(pattern.split()).casefold()
+    raw_key = f"{normalized}||{max_matches}"
+    h = hashlib.sha1(raw_key.encode("utf-8"), usedforsecurity=False).hexdigest()
+    return h
+
+
+def _load_search_cache_from_disk(current_generation: str | None) -> None:
+    """
+    Load search cache from SEARCH_CACHE_PATH if it matches current_generation.
+    Otherwise, clear in-memory cache.
+    """
+    global SEARCH_CACHE, SEARCH_CACHE_GENERATION
+
+    SEARCH_CACHE = {}
+    SEARCH_CACHE_GENERATION = current_generation
+
+    if not os.path.isfile(SEARCH_CACHE_PATH):
+        return
+
+    try:
+        with open(SEARCH_CACHE_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception as e:
+        logger.warning("Failed to load search cache: %s", e)
+        return
+
+    if not isinstance(data, dict):
+        return
+
+    file_gen = data.get("catalog_generation")
+    entries = data.get("entries")
+
+    # Invalidate if generations differ
+    if file_gen != current_generation or not isinstance(entries, dict):
+        return
+
+    SEARCH_CACHE = entries
+
+
+def _save_search_cache_to_disk() -> None:
+    """
+    Persist SEARCH_CACHE to SEARCH_CACHE_PATH together with the catalog generation.
+    """
+    global SEARCH_CACHE_GENERATION
+
+    try:
+        os.makedirs(CACHE_DIR, exist_ok=True)
+    except OSError:
+        # If we can't create cache dir, just skip persisting
+        return
+
+    payload = {
+        "catalog_generation": SEARCH_CACHE_GENERATION,
+        "entries": SEARCH_CACHE,
+    }
+
+    try:
+        with open(SEARCH_CACHE_PATH, "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False)
+    except Exception as e:
+        logger.warning("Failed to save search cache: %s", e)
+
+
+def run_search_with_persistent_cache(
+    pattern: str,
+    max_matches: int,
+) -> tuple[list[dict], bool]:
+    """
+    Synchronous helper for use via asyncio.to_thread.
+
+    - Uses a process-wide cache (SEARCH_CACHE) that is persisted to disk.
+    - Cache is invalidated whenever catalog_meta.json 'generated_at' changes.
+    - Falls back to search_in_inpx_records(...) on cache miss.
+    """
+    global SEARCH_CACHE, SEARCH_CACHE_GENERATION
+
+    current_gen = _get_catalog_generation_for_search_cache()
+
+    # If generation changed (or first use), reload from disk
+    if SEARCH_CACHE_GENERATION != current_gen:
+        _load_search_cache_from_disk(current_gen)
+
+    cache_key = _search_cache_key(pattern, max_matches)
+
+    entry = SEARCH_CACHE.get(cache_key)
+    if isinstance(entry, dict):
+        matches = entry.get("matches")
+        truncated = bool(entry.get("truncated", False))
+        if isinstance(matches, list):
+            return matches, truncated
+
+    # Cache miss: run real search
+    matches, truncated = search_in_inpx_records(pattern, max_matches)
+
+    # Store in cache (we keep raw matches; dedupe happens in the caller as before)
+    SEARCH_CACHE[cache_key] = {
+        "pattern": pattern,
+        "matches": matches,
+        "truncated": truncated,
+    }
+    SEARCH_CACHE_GENERATION = current_gen
+    _save_search_cache_to_disk()
+
+    return matches, truncated
+
+
 def extract_and_convert_to_format(match: dict, target_format: str):
     """
     For a single INPX match:
@@ -989,9 +1128,9 @@ async def check_inpx(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         "Это может занять некоторое время…"
     )
 
-    # Run heavy search in a thread
+    # Run heavy search in a thread, but with persistent cache
     matches, truncated = await asyncio.to_thread(
-        search_in_inpx_records,
+        run_search_with_persistent_cache,
         pattern,
         MAX_MATCH_COLLECT,
     )
