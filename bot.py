@@ -739,6 +739,7 @@ def _load_search_cache_from_disk(current_generation: str | None) -> None:
 def _save_search_cache_to_disk() -> None:
     """
     Persist SEARCH_CACHE to SEARCH_CACHE_PATH together with the catalog generation.
+    Ensure the file ends up with permissions 0640.
     """
     global SEARCH_CACHE_GENERATION
 
@@ -754,8 +755,19 @@ def _save_search_cache_to_disk() -> None:
     }
 
     try:
+        # Write JSON payload
         with open(SEARCH_CACHE_PATH, "w", encoding="utf-8") as f:
             json.dump(payload, f, ensure_ascii=False)
+
+        # Enforce permissions 0640 (rw-r-----)
+        try:
+            os.chmod(SEARCH_CACHE_PATH, 0o640)
+        except OSError as e:
+            logger.warning(
+                "Failed to chmod search cache file %s to 0640: %s",
+                SEARCH_CACHE_PATH,
+                e,
+            )
     except Exception as e:
         logger.warning("Failed to save search cache: %s", e)
 
