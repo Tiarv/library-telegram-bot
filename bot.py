@@ -694,11 +694,34 @@ def _get_catalog_generation_for_search_cache() -> str | None:
 
 def _search_cache_key(pattern: str, max_matches: int) -> str:
     """
-    Build a stable key for the search cache from pattern and limit.
-    We normalize whitespace and case, then hash it so keys are short.
+    Build a stable, order-insensitive key for the search cache.
+
+    - Normalize whitespace and case.
+    - Split into tokens and separate positive vs negative (prefixed with '-').
+    - Deduplicate and sort tokens, so "lem epub" and "epub lem" hit the same key.
     """
-    normalized = " ".join(pattern.split()).casefold()
-    raw_key = f"{normalized}||{max_matches}"
+    # Normalize case + whitespace
+    tokens = [t for t in pattern.casefold().split() if t]
+
+    positive: list[str] = []
+    negative: list[str] = []
+
+    for tok in tokens:
+        if tok.startswith("-") and len(tok) > 1:
+            negative.append(tok[1:])  # strip leading '-'
+        else:
+            positive.append(tok)
+
+    # Deduplicate and sort so order doesn't matter
+    positive_norm = sorted(set(positive))
+    negative_norm = sorted(set(negative))
+
+    # Rebuild canonical query form: all positives first, then negatives with '-'
+    canonical_query = " ".join(
+        positive_norm + [f"-{t}" for t in negative_norm]
+    )
+
+    raw_key = f"{canonical_query}||{max_matches}"
     h = hashlib.sha1(raw_key.encode("utf-8"), usedforsecurity=False).hexdigest()
     return h
 
