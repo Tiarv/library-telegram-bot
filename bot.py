@@ -75,7 +75,7 @@ CAPTION_HARD_LIMIT = 1024
 CHECK_CONFIRM_THRESHOLD = 20
 SEARCH_RESULTS_MESSAGE_DELAY_SECONDS = 2.0
 
-SEPARATORS = ("\x04")
+SEPARATORS = ("\x04",)
 
 
 def format_mb(bytes_size: int) -> str:
@@ -330,32 +330,47 @@ def _read_inpx_field_names(inpx_path: str) -> list[str] | None:
                             header_line = line
                             break
 
+                    if text is None:
+                        logger.warning(
+                            "Failed to decode structure.info in %s as utf-8 or cp1251",
+                            inpx_path,
+                        )
+                        names = None
+                    else:
+                        header_line: str | None = None
+                        for line in text.splitlines():
+                            line = line.strip()
+                            if not line:
+                                continue
+                            if line.startswith("#") or line.startswith(";") or line.startswith("//"):
+                                continue
+                            header_line = line
+                            break
+
                         if not header_line:
                             names = None
                         else:
-                            if "\x04" in header_line:
-                                sep = "\x04"
-                            else:
+                            # structure.info uses ';' as field separator
+                            if ";" not in header_line:
                                 logger.warning(
-                                    "structure.info in %s does not contain expected ^D separator; "
+                                    "structure.info in %s does not contain ';' separator; "
                                     "field names will not be available",
                                     inpx_path,
                                 )
                                 INPX_FIELD_NAMES_CACHE[inpx_path] = None
                                 return None
 
-                            if not sep:
+                            sep = ";"
+
+                            # Preserve original casing but strip whitespace
+                            parts_raw = [p.strip() for p in header_line.split(sep)]
+                            if not any(parts_raw):
                                 names = None
                             else:
-                                parts_raw = [p.strip() for p in header_line.split(sep)]
-                                if not any(parts_raw):
-                                    names = None
-                                else:
-                                    names = [
-                                        p if p else f"Field {i + 1}"
-                                        for i, p in enumerate(parts_raw)
-                                    ]
-
+                                names = [
+                                    p if p else f"Field {i + 1}"
+                                    for i, p in enumerate(parts_raw)
+                                ]
     except Exception as e:
         logger.warning(
             "Failed to parse structure.info from %s: %s",
