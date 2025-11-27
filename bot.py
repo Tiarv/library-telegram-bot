@@ -75,7 +75,7 @@ CAPTION_HARD_LIMIT = 1024
 CHECK_CONFIRM_THRESHOLD = 20
 SEARCH_RESULTS_MESSAGE_DELAY_SECONDS = 2.0
 
-SEPARATORS = ("\x04", "\t", ";", "|")
+SEPARATORS = ("\x04")
 
 
 def format_mb(bytes_size: int) -> str:
@@ -333,11 +333,16 @@ def _read_inpx_field_names(inpx_path: str) -> list[str] | None:
                         if not header_line:
                             names = None
                         else:
-                            sep: str | None = None
-                            for candidate in ("\x04", ";", "|", "\t", ","):
-                                if candidate in header_line:
-                                    sep = candidate
-                                    break
+                            if "\x04" in header_line:
+                                sep = "\x04"
+                            else:
+                                logger.warning(
+                                    "structure.info in %s does not contain expected ^D separator; "
+                                    "field names will not be available",
+                                    inpx_path,
+                                )
+                                INPX_FIELD_NAMES_CACHE[inpx_path] = None
+                                return None
 
                             if not sep:
                                 names = None
