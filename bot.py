@@ -1027,9 +1027,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     delete_trigger_message = False
 
-    # Deep-link handling: /start get_<n>
+    # Deep-link handling: /start get_<n> or /start info_<n>
     if context.args:
         arg = context.args[0]
+
         if arg.startswith("get_"):
             delete_trigger_message = True
             try:
@@ -1043,19 +1044,38 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             context.args = [str(index)]
             await pickfmt(update, context)  # your /get handler
 
-            # Try to delete the triggering /start message
             if delete_trigger_message and message:
                 try:
                     await message.delete()
                 except TelegramError:
-                    # no rights / too old / etc. – ignore quietly
+                    pass
+
+            return
+
+        elif arg.startswith("info_"):
+            delete_trigger_message = True
+            try:
+                index = int(arg.split("_", 1)[1])
+            except ValueError:
+                if message:
+                    await message.reply_text("Неверный параметр ссылки.")
+                return
+
+            # Pretend user ran "/info <index>"
+            context.args = [str(index)]
+            await info_cmd(update, context)
+
+            if delete_trigger_message and message:
+                try:
+                    await message.delete()
+                except TelegramError:
                     pass
 
             return
 
     # Normal /start without deep-link: keep behaviour as-is
     await help_cmd(update, context)
-    
+
 
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     message = update.effective_message
@@ -1125,19 +1145,35 @@ async def send_matches_list(
         title = rec.get("title") or "<?>"
         ext = rec.get("ext") or "<?>"
 
-        base_plain = f"{idx}) {author} — {title}"
+        # Base text WITHOUT index – index will be a clickable link
+        base_plain = f"{author} — {title}"
 
         if len(base_plain) > max_line_len:
+            # hard-trim the line; user still sees the beginning + ellipsis
             base_plain = base_plain[: max_line_len - 1] + "…"
 
-        if BOT_USERNAME and ext != "<?>":
-            deeplink = f"https://t.me/{BOT_USERNAME}?start=get_{idx}"
-            line_html = (
-                f"{html.escape(base_plain)} "
-                f"[<a href=\"{html.escape(deeplink)}\">{html.escape(ext)}</a>]"
+        if BOT_USERNAME:
+            # Deep-link for /info
+            info_deeplink = f"https://t.me/{BOT_USERNAME}?start=info_{idx}"
+            index_html = (
+                f"<a href=\"{html.escape(info_deeplink)}\">{idx})</a>"
             )
+
+            # Deep-link for /get on the extension, if we know it
+            if ext != "<?>":
+                get_deeplink = f"https://t.me/{BOT_USERNAME}?start=get_{idx}"
+                ext_html = (
+                    f"[<a href=\"{html.escape(get_deeplink)}\">"
+                    f"{html.escape(ext)}</a>]"
+                )
+            else:
+                ext_html = f"[{html.escape(ext)}]"
+
+            line_html = f"{index_html} {html.escape(base_plain)} {ext_html}"
         else:
-            line_html = f"{html.escape(base_plain)} [{html.escape(ext)}]"
+            # Fallback: no username – plain text only
+            base_with_index = f"{idx}) {base_plain}"
+            line_html = f"{html.escape(base_with_index)} [{html.escape(ext)}]"
 
         lines.append(line_html)
 
